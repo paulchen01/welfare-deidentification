@@ -85,3 +85,15 @@ RED 證據：首次 review regression run **47 tests 中 10 failed、37 passed**
 最終本次命令沿用上方 7-file 相關格式回歸命令，結果 **7 files、94 tests 通過**（安全測試 **55** 項），exit 0，2.62 秒，2026-10-18 17:53:26。`node node_modules/typescript/bin/tsc --noEmit` 亦 exit 0。本次補正未修改 `pdf.ts` 或 `ocr.ts`；真 OCR 的既有 traineddata stderr 警告及前次 6/6 結果仍如上記錄，未將警告抹除或改稱無警告。
 
 相容性界線：不在已知 Word 節點／格式欄位集合中的擴充、複雜主題或自訂設定會保守阻擋，提供核對後擷取文字輸出；不是把未知內容刪掉後標成成功。樣式及字型標籤中性化會改動文件可辨識的中繼名稱與字型選擇，使用者需核對版面。
+
+## 最終 review 補正：Excel 樣式中繼資料（2026-10-18）
+
+最終 review 發現 `xl/styles.xml` 的 `cellStyle/@name` 可含不在儲存格預覽中的人名，原格式仍會保留；此問題確實存在。新增探針同時檢查 cell-style／font 名稱、自訂 tableStyle、自訂 defaultTableStyle、未知 styles 屬性及 numFmt formatCode：RED 結果 **4 failed、1 passed**（另 44 skipped），既有 numFmt 阻擋已有效，其餘漏口重現。
+
+修正後：
+
+- cellStyle 名稱改為不重複的中性樣式序號；Excel font/name、DrawingML 主題名稱與字型名稱中性化。workbook／sheet／fileVersion 的 codeName 清除，fileVersion appName 固定為 `xl`。這些屬性不改動儲存格內容與索引；原始 ZIP 保持不變。
+- `xl/styles.xml` 使用明確的節點／屬性與格式值集合，阻擋未知文字欄位／節點；自訂 tableStyle 定義與自訂 defaultTableStyle／defaultPivotStyle 名稱阻擋。標準 TableStyle／PivotStyle 預設名稱可用，並有正常原格式輸出測試。
+- numFmt／formatCode 仍全面阻擋；沒有刪除未知顯示格式後宣稱成功。info 明示樣式／字型／主題識別名稱會清理、字型與版面可能改變。所有 report／錯誤仍不顯示來源欄位值。
+
+最終相關回歸命令沿用上述 7-file 命令，**7 files、101 tests 通過**（安全測試 **62** 項），exit 0，3.00 秒（2026-10-18 19:21:28）。`node node_modules/typescript/bin/tsc --noEmit` exit 0。未修改 OCR 檔與原有 OCR 警告處理，也未修改 UI／session 或父代理負責的重複 person ID 功能。

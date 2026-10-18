@@ -81,6 +81,54 @@ describe('native document safety', () => {
     expect(text).not.toContain('秘密名單');
   });
 
+  it('cleans unpreviewed Excel cell-style names and font names', async () => {
+    const { document: doc, report } = await parseSafeDocument(await excel(async (zip) => {
+      zip.file('xl/styles.xml', (await zip.file('xl/styles.xml')!.async('string')).replace('<font>', '<font><name val="陳隱名字型"/>').replace('</styleSheet>', '<cellStyles count="1"><cellStyle name="陳隱名專用" xfId="0" builtinId="0"/></cellStyles></styleSheet>'));
+    }));
+    expect(doc.text).not.toContain('陳隱名');
+    expect(report.nativeAllowed).toBe(true);
+    const output = await unpack(await generateSafeDocument(doc, [edit], report));
+    const styles = await output.file('xl/styles.xml')!.async('string');
+    expect(styles).not.toContain('陳隱名');
+    expect(styles).toContain('中性樣式');
+    expect(styles).toContain('Noto Sans TC');
+    expect(JSON.stringify(report)).not.toContain('陳隱名');
+  });
+
+  it.each([
+    ['custom table style', '<tableStyles count="1"><tableStyle name="陳隱名專用" count="0"/></tableStyles>'],
+    ['custom default table style', '<tableStyles count="0" defaultTableStyle="陳隱名專用"/>'],
+    ['unknown style field', '<cellStyles count="1"><cellStyle name="一般樣式" xfId="0" private="陳隱名專用"/></cellStyles>'],
+    ['custom number format', '<numFmts count="1"><numFmt numFmtId="164" formatCode="&quot;陳隱名專用&quot;"/></numFmts>'],
+  ])('blocks unpreviewed Excel %s', async (_, payload) => {
+    const { document: doc, report } = await parseSafeDocument(await excel(async (zip) => {
+      zip.file('xl/styles.xml', (await zip.file('xl/styles.xml')!.async('string')).replace('</styleSheet>', payload + '</styleSheet>'));
+    }));
+    expect(report.nativeAllowed).toBe(false);
+    expect(JSON.stringify(report)).not.toContain('陳隱名');
+    await expect(generateSafeDocument(doc, [edit], { nativeAllowed: true, issues: [] })).rejects.toThrow(/原格式/);
+  });
+
+  it('keeps built-in Excel table-style defaults eligible without copying arbitrary labels', async () => {
+    const { document: doc, report } = await parseSafeDocument(await excel(async (zip) => {
+      zip.file('xl/styles.xml', (await zip.file('xl/styles.xml')!.async('string')).replace('</styleSheet>', '<tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/></styleSheet>'));
+    }));
+    expect(report.nativeAllowed).toBe(true);
+    const output = await unpack(await generateSafeDocument(doc, [edit], report));
+    expect(await output.file('xl/styles.xml')!.async('string')).toContain('TableStyleMedium2');
+  });
+
+  it('cleans analogous workbook program names and theme labels without mutating the source', async () => {
+    const { document: doc, report } = await parseSafeDocument(await excel(async (zip) => {
+      zip.file('xl/workbook.xml', (await zip.file('xl/workbook.xml')!.async('string')).replace('<sheets>', '<fileVersion appName="陳隱名程式"/><workbookPr codeName="陳隱名代碼"/><sheets>'));
+      zip.file('xl/theme/theme1.xml', '<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="陳隱名主題"><a:themeElements><a:fontScheme name="陳隱名樣式"><a:majorFont><a:latin typeface="陳隱名字型"/></a:majorFont></a:fontScheme></a:themeElements></a:theme>');
+    }));
+    expect(report.nativeAllowed).toBe(true);
+    const output = await unpack(await generateSafeDocument(doc, [edit], report));
+    expect((await output.file('xl/workbook.xml')!.async('string')) + (await output.file('xl/theme/theme1.xml')!.async('string'))).not.toContain('陳隱名');
+    expect(await (doc.handle as { zip: JSZip }).zip.file('xl/workbook.xml')!.async('string')).toContain('陳隱名');
+  });
+
   it('preserves Excel source bytes across repeated different exports', async () => {
     const { document: doc, report } = await parseSafeDocument(await excel());
     const source = (doc.handle as { zip: JSZip }).zip;

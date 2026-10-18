@@ -88,6 +88,38 @@ function hasUnreviewedPackageData(part: Document, path: string, parts: Map<strin
   }
   return false;
 }
+const XLSX_STYLE_NODES = new Set(('styleSheet fonts font name charset family b i strike outline shadow condense extend color sz u vertAlign scheme fills fill patternFill fgColor bgColor gradientFill stop borders border left right top bottom diagonal vertical horizontal start end cellStyleXfs cellXfs xf alignment protection cellStyles cellStyle dxfs dxf tableStyles colors indexedColors rgbColor mruColors').split(' '));
+const XLSX_STYLE_ATTRIBUTES: Record<string, string[]> = {
+  fonts: ['count'], fills: ['count'], borders: ['count'], cellStyleXfs: ['count'], cellXfs: ['count'], cellStyles: ['count'], dxfs: ['count'],
+  name: ['val'], charset: ['val'], family: ['val'], b: ['val'], i: ['val'], strike: ['val'], outline: ['val'], shadow: ['val'], condense: ['val'], extend: ['val'], sz: ['val'], u: ['val'], vertAlign: ['val'], scheme: ['val'],
+  color: ['auto', 'indexed', 'rgb', 'theme', 'tint'], fgColor: ['auto', 'indexed', 'rgb', 'theme', 'tint'], bgColor: ['auto', 'indexed', 'rgb', 'theme', 'tint'], rgbColor: ['rgb'],
+  patternFill: ['patternType'], gradientFill: ['type', 'degree', 'left', 'right', 'top', 'bottom'], stop: ['position'], border: ['diagonalUp', 'diagonalDown', 'outline'],
+  left: ['style'], right: ['style'], top: ['style'], bottom: ['style'], diagonal: ['style'], vertical: ['style'], horizontal: ['style'], start: ['style'], end: ['style'],
+  xf: ['numFmtId', 'fontId', 'fillId', 'borderId', 'xfId', 'applyNumberFormat', 'applyFont', 'applyFill', 'applyBorder', 'applyAlignment', 'applyProtection', 'pivotButton', 'quotePrefix'],
+  alignment: ['horizontal', 'vertical', 'textRotation', 'wrapText', 'shrinkToFit', 'justifyLastLine', 'indent', 'relativeIndent', 'readingOrder'], protection: ['locked', 'hidden'],
+  cellStyle: ['name', 'xfId', 'builtinId', 'iLevel', 'customBuiltin', 'hidden'], tableStyles: ['count', 'defaultTableStyle', 'defaultPivotStyle'],
+};
+const XLSX_STYLE_TOKENS = new Set(('true false none solid mediumGray darkGray lightGray darkHorizontal darkVertical darkDown darkUp darkGrid darkTrellis lightHorizontal lightVertical lightDown lightUp lightGrid lightTrellis gray125 gray0625 linear path thin medium dashed dotted thick double hair mediumDashed dashDot mediumDashDot dashDotDot mediumDashDotDot slantDashDot general left center right fill justify centerContinuous distributed top bottom baseline superscript subscript single singleAccounting doubleAccounting major minor').split(' '));
+function neutralXlsxAttribute(el: Element, attr: Attr): boolean {
+  return el.namespaceURI === X && ((el.localName === 'cellStyle' && attr.localName === 'name') || (el.localName === 'name' && el.parentElement?.localName === 'font' && attr.localName === 'val')) || /\/drawingml\/2006\/main$/.test(el.namespaceURI ?? '') && ['name', 'typeface'].includes(attr.localName);
+}
+function hasUnreviewedXlsxStyles(part: Document, path: string): boolean {
+  if (path !== 'xl/styles.xml') return false;
+  for (const el of Array.from(part.getElementsByTagName('*'))) {
+    if (el.namespaceURI !== X || !XLSX_STYLE_NODES.has(el.localName) || el.textContent?.trim()) return true;
+    for (const attr of Array.from(el.attributes)) {
+      if (attr.namespaceURI === 'http://www.w3.org/2000/xmlns/' || neutralXlsxAttribute(el, attr)) continue;
+      if (!XLSX_STYLE_ATTRIBUTES[el.localName]?.includes(attr.localName)) return true;
+      if (['defaultTableStyle', 'defaultPivotStyle'].includes(attr.localName)) {
+        if (!/^(?:Table|Pivot)Style(?:Light|Medium|Dark)[1-9]\d?$/.test(attr.value)) return true;
+        continue;
+      }
+      if (attr.localName === 'rgb') { if (!/^[a-f\d]{8}$/i.test(attr.value)) return true; continue; }
+      if (!/^-?\d{1,6}(?:\.\d{1,8})?$/.test(attr.value) && !XLSX_STYLE_TOKENS.has(attr.value)) return true;
+    }
+  }
+  return false;
+}
 
 function xml(value: string): Document {
   if (/<!DOCTYPE|<!ENTITY/i.test(value)) throw new Error('文件含不支援的 XML 結構');
@@ -209,6 +241,7 @@ async function inspectOffice(doc: LoadedDocument): Promise<FormatSafetyReport> {
       if (Array.from(part.getElementsByTagNameNS(W, 'lvlText')).some((el) => !SAFE_NUMBERING_TEXT.test(el.getAttributeNS(W, 'val') ?? ''))) add('uncovered-numbering', 'Word 編號含自訂文字，未納入文字偵測');
       if (!/^word\/(document|header\d*|footer\d*)\.xml$/.test(path) && part.getElementsByTagNameNS(W, 't').length) add('uncovered-word-text', 'Word 的非正文項目含文字，未完整納入預覽');
     } else {
+      if (hasUnreviewedXlsxStyles(part, path)) add('unreviewed-excel-styles', 'Excel 樣式含自訂表格樣式或未知文字屬性，未納入預覽，已阻擋原格式輸出');
       if (/^xl\/(workbook|sharedStrings|styles|worksheets\/sheet\d+)\.xml$/.test(path) && part.documentElement.namespaceURI !== X) add('unsupported-schema', '試算表使用不支援的 XML 格式，無法完整擷取');
       if (elements(part, ['f', 'definedName', 'externalReference', 'calcChain', 'pivotTable', 'tablePart'])) add('formula-reference', 'Excel 含公式、名稱或資料參照；公式及快取值未完整納入偵測，已阻擋原格式輸出');
       if (elements(part, ['rPh', 'phoneticPr', 'extLst', 'legacyDrawing', 'drawing', 'hyperlink', 'oleObject', 'headerFooter', 'dataValidations', 'conditionalFormatting', 'customSheetViews', 'controls', 'webPublishItems', 'scenarios'])) add('unsupported-excel-text', 'Excel 含頁首頁尾、驗證規則、注音、擴充、超連結或繪圖內容，未完整納入預覽');
@@ -226,7 +259,10 @@ async function inspectOffice(doc: LoadedDocument): Promise<FormatSafetyReport> {
       }
     }
   }
-  if (doc.format === 'xlsx') add('sheet-names-cleaned', '安全原格式輸出會將工作表名稱改為中性工作表加序號', 'info');
+  if (doc.format === 'xlsx') {
+    add('sheet-names-cleaned', '安全原格式輸出會將工作表名稱改為中性工作表加序號', 'info');
+    add('excel-style-labels-cleaned', '安全輸出會中性化儲存格樣式、字型、主題及程式識別名稱，字型與版面可能改變', 'info');
+  }
   return { nativeAllowed: !issues.some((issue) => issue.severity === 'block'), issues };
 }
 
@@ -306,6 +342,9 @@ async function sanitizeOffice(zip: JSZip, format: 'docx' | 'xlsx'): Promise<void
       for (const attr of Array.from(el.attributes)) {
         if (authorAttribute(attr)) { el.removeAttributeNode(attr); continue; }
         if (format === 'docx' && neutralWordAttribute(el, attr)) attr.value = el.localName === 'style' || STYLE_REFS.has(el.localName) ? safeStyle(attr.value) : ['font', 'rFonts', 'altName', 'latin', 'ea', 'cs'].includes(el.localName) || attr.localName === 'typeface' ? 'Noto Sans TC' : `中性樣式${++labelId}`;
+        if (format === 'xlsx' && neutralXlsxAttribute(el, attr)) attr.value = el.localName === 'name' || attr.localName === 'typeface' ? 'Noto Sans TC' : `中性樣式${++labelId}`;
+        if (format === 'xlsx' && attr.localName === 'codeName' && ['workbookPr', 'sheetPr', 'fileVersion'].includes(el.localName)) el.removeAttributeNode(attr);
+        if (format === 'xlsx' && el.localName === 'fileVersion' && attr.localName === 'appName') attr.value = 'xl';
       }
       if (entry.name === '[Content_Types].xml' && el.localName === 'Override' && META.test((el.getAttribute('PartName') ?? '').replace(/^\//, ''))) el.remove();
       if (entry.name.endsWith('.rels') && el.localName === 'Relationship' && /\/(core-properties|extended-properties|custom-properties)$/.test(el.getAttribute('Type') ?? '')) el.remove();
