@@ -1,5 +1,5 @@
 {
-  "name": "data-deidentification",
+  "name": "welfare-deidentification",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -35,10 +35,5 @@
     "vitest": "^4.1.11"
   },
   "license": "MIT",
-  "author": "Dean Lin",
-  "homepage": "https://deanlin.net/data-deidentification/",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/dean9703111/data-deidentification.git"
-  }
+  "author": "Dean Lin"
 }

@@ -28,8 +28,6 @@ function buildDate(): Plugin {
   };
 }
 
-const REPO = 'https://github.com/dean9703111/data-deidentification';
-
 /**
  * llms-full.txt: the README as plain Markdown for AI crawlers and agents (llmstxt.org), without the
  * screenshots and badges, and with its relative links made absolute.
@@ -46,10 +44,8 @@ function llmsFull(): Plugin {
       const readme = readFileSync(resolve(root, 'README.md'), 'utf8')
         .replace(/^\[?!\[[^\]]*\]\([^)]*\)(\]\([^)]*\))?\s*$/gm, '') // images and image badges on their own line
         .replace(/<p align="center">[\s\S]*?<\/p>\n?/g, '') // the centred screenshot
-        .replace(/\]\(#([^)]+)\)/g, `](${REPO}#$1)`)
-        .replace(/\]\((?!https?:|mailto:)([^)]+)\)/g, `](${REPO}/blob/main/$1)`)
         .replace(/\n{3,}/g, '\n\n');
-      const header = `> 本檔為 ${REPO} 的 README（完整操作說明），提供給 AI 搜尋與代理程式閱讀；網站摘要見 llms.txt。更新：${today()}\n\n`;
+      const header = `> 社福去識別化工作流程版操作說明。更新：${today()}\n\n`;
       this.emitFile({ type: 'asset', fileName: 'llms-full.txt', source: readme.replace(/^(# .*\n)/, `$1\n${header}`) });
     },
   };
@@ -96,9 +92,12 @@ export default defineConfig({
   plugins: [buildDate(), llmsFull(), ocrAssets()],
   build: {
     target: 'es2022',
+    rollupOptions: { input: { main:resolve('index.html'), verification:resolve('verification.html') } },
   },
   test: {
     environment: 'jsdom',
+    // Node 25 exposes process-wide Web Storage; browser tests must use jsdom's own storage.
+    execArgv: Number(process.versions.node.split('.')[0]) >= 25 ? ['--no-experimental-webstorage'] : [],
     include: ['tests/**/*.test.ts'],
     // PDF/docx round-trips embed fonts and zip files; give them headroom on slow CI runners.
     testTimeout: 30000,

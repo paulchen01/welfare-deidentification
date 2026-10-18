@@ -1,0 +1,97 @@
+import type { UIContext } from './ui-context';
+import { node,button,title,card,field,input,select,checkbox,pill } from './ui-kit';
+import { PURPOSES,DOCUMENT_KINDS,PERSON_ROLES } from './policies';
+import { WELFARE_SAMPLES } from './samples';
+import type { Person, DocumentKind } from './types';
+
+export function documentPicker(ctx:UIContext):HTMLElement {
+  const row=node('div','document-picker');
+  const picker=select(ctx.session.documents.map((d,i)=>({value:d.id,label:`文件 ${i+1} · ${d.document.format.toUpperCase()} · ${d.document.text.length.toLocaleString()} 字元`})),ctx.session.activeId);
+  picker.setAttribute('aria-label','目前文件');
+  picker.onchange=()=>{ctx.session.activeId=picker.value;ctx.render();};
+  row.append(picker,pill(`${ctx.session.documents.length} 份文件`));return row;
+}
+export function inputView(ctx:UIContext):HTMLElement {
+  const root=node('div','view');
+  root.append(title('01 / 準備資料','分享之前，先保護個案。','選擇用途，加入資料，再確認人物與敏感內容。所有處理都在這部電腦的瀏覽器內完成。'));
+  const purposes=node('div','purpose-grid');
+  for(const purpose of PURPOSES){
+    const b=button('',()=>{ctx.session.setPurpose(purpose.id);ctx.render();},`purpose ${ctx.session.purpose===purpose.id?'selected':''}`);
+    b.setAttribute('aria-pressed',String(ctx.session.purpose===purpose.id));
+    b.append(node('span','purpose-title',purpose.label),node('span','muted',purpose.description));purposes.append(b);
+  }
+  root.append(purposes);
+  const entry=card('加入文件');
+  const kind=select(DOCUMENT_KINDS.map(k=>({value:k.id,label:k.label})),ctx.session.kind);
+  kind.onchange=()=>{ctx.session.kind=kind.value as DocumentKind;};
+  entry.append(field('文件種類',kind));
+  const text=node('textarea','control source-input');text.value=ctx.rawInput;text.placeholder='貼上服務紀錄、訪談逐字稿或會議紀錄……';
+  text.setAttribute('aria-label','貼上待處理文字');text.oninput=()=>{ctx.rawInput=text.value;};
+  entry.append(text);
+  const bar=node('div','action-row');
+  const add=button('加入這段文字',()=>ctx.run(async()=>ctx.addText(text.value)),'button primary');add.disabled=ctx.busy;
+  const files=node('input');files.type='file';files.multiple=true;files.accept='.txt,.md,.docx,.xlsx,.pdf';files.className='file-input';files.setAttribute('aria-label','選擇文件');
+  files.onchange=()=>{if(files.files)ctx.addFiles(Array.from(files.files));files.value='';};
+  const fileLabel=node('label','button secondary file-label','選擇檔案');fileLabel.append(files);
+  bar.append(add,fileLabel,node('small','muted','TXT、MD、Word、Excel、PDF · 每批最多 10 份'));
+  entry.append(bar,node('p','fine','檔案上限 100 MB。掃描 PDF 首次辨識可能需要較久；圖片、簽名及未支援的隱藏內容會列入格式限制。'));
+  root.append(entry);
+  if(ctx.session.documents.length){
+    const loaded=card('本次資料');
+    ctx.session.documents.forEach((d,i)=>{
+      const row=node('div','file-row');row.append(node('strong','',`文件 ${i+1}`),pill(d.document.format.toUpperCase()),node('span','muted',`${d.document.fileName} · ${d.document.text.length.toLocaleString()} 字元 · ${d.findings.length} 處待檢視`),button('移除',()=>{ctx.session.remove(d.id);ctx.render();},'button text-button'));
+      loaded.append(row);
+    });
+    loaded.append(button('前往人物與規則 →',()=>ctx.go('people'),'button primary'));root.append(loaded);
+  }
+  const demos=card('先用虛構資料試一次');
+  demos.append(node('p','muted','範例皆為合成資料。可用來熟悉流程，不需先放入真實個案。'));
+  const domains=[...new Set(WELFARE_SAMPLES.map(s=>s.domain))];const choices=node('div','sample-grid');
+  for(const domain of domains){const sample=WELFARE_SAMPLES.find(s=>s.domain===domain)!;choices.append(button(domain,()=>ctx.run(async()=>ctx.useSample(sample)),'sample-button'));}
+  demos.append(choices);root.append(demos);return root;
+}
+
+export function peopleView(ctx:UIContext):HTMLElement {
+  const root=node('div','view');root.append(title('02 / 人物與規則','先確認誰是誰。','候選姓名需要你確認。只在相同案件組內建立人物關聯，別名不會自動跨案合併。'));
+  if(!ctx.session.active){root.append(card('請先加入資料'));return root;}
+  root.append(documentPicker(ctx));const doc=ctx.session.active;
+  const grouping=card('案件分組');
+  const otherGroups=ctx.session.documents.filter(d=>d.id!==doc.id);
+  const groups=select([{value:'__new__',label:'獨立案件'},...otherGroups.map((d)=>({value:d.groupId,label:`與文件 ${ctx.session.documents.indexOf(d)+1} 同案`}))],otherGroups.some(d=>d.groupId===doc.groupId)?doc.groupId:'__new__');
+  groups.onchange=()=>{
+    const old=doc.groupId;doc.groupId=groups.value==='__new__'?crypto.randomUUID():groups.value;
+    if(old!==doc.groupId){
+      const oldStillUsed=ctx.session.documents.some(d=>d.id!==doc.id&&d.groupId===old);
+      const migrating=ctx.session.people.filter(p=>p.groupId===old).map(p=>({...p,id:crypto.randomUUID(),groupId:doc.groupId,aliases:[...p.aliases],confirmed:false}));
+      if(!oldStillUsed)ctx.session.people=ctx.session.people.filter(p=>p.groupId!==old);
+      for(const p of migrating)if(!ctx.session.people.some(x=>x.groupId===p.groupId&&x.name===p.name))ctx.session.people.push(p);
+      ctx.invalidate();
+    }
+  };
+  grouping.append(field('這份文件屬於',groups,'只有你明確選擇同案，人物名稱才會共用標記。'));
+  root.append(grouping);
+  const people=card('人物與稱謂');
+  people.append(node('p','muted','逐一核對姓名、角色與別名。確認後，所有完全相同的寫法會使用同一標記。一般稱謂如「媽媽」需你自行判斷是否會指向多個人。'));
+  people.append(node('p','fine','合併同一人：將另一名稱加到別名，再移除多餘人物。拆開人物：移除該別名並另加人物。相同名字指向不同人時會標示歧義，請分段或拆成不同文件處理。'));
+  for(const person of ctx.session.people.filter(p=>p.groupId===doc.groupId)) people.append(personEditor(ctx,person));
+  if(!ctx.session.people.some(p=>p.groupId===doc.groupId))people.append(node('p','empty','尚未找到候選姓名。可手動加入，再檢查全文。'));
+  people.append(button('＋ 新增人物',()=>{
+    ctx.session.people.push({id:crypto.randomUUID(),groupId:doc.groupId,name:'',aliases:[],role:PERSON_ROLES[0]??'案主',confirmed:false});ctx.render();
+  }));root.append(people);
+  const source=card('原文參考');source.append(node('pre','source-preview',doc.document.text));root.append(source);
+  root.append(button('前往人工覆核 →',()=>ctx.go('review'),'button primary'));return root;
+}
+
+function personEditor(ctx:UIContext,person:Person):HTMLElement {
+  const row=node('div','person-editor');
+  const name=input(person.name,'完整姓名');const alias=input(person.aliases.join('、'),'以「、」分隔，例如陳女士、小安');
+  const role=select(PERSON_ROLES.map(r=>({value:r,label:r})),person.role);
+  const changed=()=>{person.name=name.value.trim();person.aliases=[...new Set(alias.value.split(/[、,，\n]/).map(v=>v.trim()).filter(Boolean))];person.role=role.value;person.confirmed=false;ctx.invalidate();};
+  name.onchange=changed;alias.onchange=changed;role.onchange=changed;
+  row.append(field('姓名',name),field('角色',role),field('別名／稱謂',alias));
+  row.append(checkbox('已確認是同一人',person.confirmed,checked=>{
+    if(checked&&!person.name.trim()){ctx.notify('請先填寫人物姓名');ctx.render();return;}
+    person.confirmed=checked;ctx.invalidate();
+  }),button('移除',()=>{ctx.session.people=ctx.session.people.filter(p=>p.id!==person.id);ctx.invalidate();},'button text-button'));
+  return row;
+}
