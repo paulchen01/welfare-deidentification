@@ -3,6 +3,33 @@ import { mountWelfareApp } from '../../src/welfare/app';
 describe('welfare workflow interface', () => {
   beforeEach(()=>{vi.spyOn(window,'scrollTo').mockImplementation(()=>{});});
   afterEach(()=>{vi.restoreAllMocks();window.getSelection()?.removeAllRanges();});
+  it('does not revive a later cancelled import when an older import resolves',async()=>{
+    const parser=await import('../../src/welfare/document-safety');const parsed=vi.spyOn(parser,'parseSafeDocument');
+    let resolveA!:(text:string)=>void;let resolveB!:(text:string)=>void;
+    const pendingA=new Promise<string>(resolve=>{resolveA=resolve;});const pendingB=new Promise<string>(resolve=>{resolveB=resolve;});
+    const a=new File(['a'],'a.txt');Object.defineProperty(a,'text',{value:()=>pendingA});
+    const b=new File(['b'],'b.txt');Object.defineProperty(b,'text',{value:()=>pendingB});
+    const host=document.createElement('div');const app=mountWelfareApp(host);
+    app.addFiles([a]);await vi.waitFor(()=>expect(parsed).toHaveBeenCalledTimes(1));
+    app.clear();app.addFiles([b]);await vi.waitFor(()=>expect(parsed).toHaveBeenCalledTimes(2));
+    resolveA('案主：王小明。');await parsed.mock.results[0].value;await Promise.resolve();
+    app.clear();resolveB('案主：陳美惠。');await parsed.mock.results[1].value;await Promise.resolve();
+    expect(app.session.documents).toHaveLength(0);expect(app.session.people).toHaveLength(0);
+    expect(app.view).toBe('input');expect(app.busy).toBe(false);
+  });
+  it('removing one case person preserves another case and its confirmed aliases',()=>{
+    const host=document.createElement('div');const app=mountWelfareApp(host);
+    app.addText('案主：王小明。');const first=app.session.active!;
+    app.addText('案主：陳美惠。小惠接受服務。');const second=app.session.active!;
+    const other=app.session.people.find(p=>p.groupId===second.groupId)!;
+    other.aliases=['小惠'];other.confirmed=true;app.session.reanalyseAll();
+    expect(second.findings.some(f=>f.original==='小惠'&&f.source==='person')).toBe(true);
+    app.session.activeId=first.id;app.go('people');
+    [...host.querySelectorAll('.person-editor button')].find(b=>b.textContent==='移除')!.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+    expect(app.session.people).toContain(other);
+    expect(second.findings.some(f=>f.original==='小惠'&&f.source==='person')).toBe(true);
+    expect(second.reviewConfirmed).toBe(false);
+  });
   it('gates export until reviewed and clears case state', () => {
     const host = document.createElement('div'); document.body.append(host);
     const app = mountWelfareApp(host);

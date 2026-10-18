@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { WorkspaceSession } from '../../src/welfare/session';
 
 describe('local session lifecycle', () => {
+  it('assigns candidate people unique IDs across separate documents',()=>{
+    const s=new WorkspaceSession();
+    s.add({fileName:'a.txt',format:'txt',text:'案主：王小明。',handle:null},{nativeAllowed:true,issues:[]});
+    s.add({fileName:'b.txt',format:'txt',text:'案主：陳美惠。小惠接受服務。',handle:null},{nativeAllowed:true,issues:[]});
+    expect(s.people).toHaveLength(2);
+    expect(new Set(s.people.map(p=>p.id)).size).toBe(2);
+  });
   it('isolates different documents and invalidates review after purpose changes', () => {
     const s = new WorkspaceSession();
     const first = s.add({fileName:'a.txt',format:'txt',text:'案主：王小明',handle:null}, {nativeAllowed:true,issues:[]});

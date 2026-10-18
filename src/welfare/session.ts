@@ -25,7 +25,7 @@ export class WorkspaceSession {
     if (!document.text.trim()) throw new Error('未取得可檢視文字，請確認檔案內容或辨識結果');
     const id = crypto.randomUUID();
     const item:WorkspaceDocument = {id, document, report, groupId:id, kind:this.kind, findings:[], reviewConfirmed:false, mode:'text'};
-    this.people.push(...proposePeople(document.text, id));
+    this.people.push(...proposePeople(document.text, id).map(person=>({...person,id:crypto.randomUUID()})));
     this.documents.push(item); this.activeId = id;
     this.reanalyse(item);
     return item;

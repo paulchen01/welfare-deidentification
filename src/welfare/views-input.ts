@@ -92,6 +92,6 @@ function personEditor(ctx:UIContext,person:Person):HTMLElement {
   row.append(checkbox('已確認是同一人',person.confirmed,checked=>{
     if(checked&&!person.name.trim()){ctx.notify('請先填寫人物姓名');ctx.render();return;}
     person.confirmed=checked;ctx.invalidate();
-  }),button('移除',()=>{ctx.session.people=ctx.session.people.filter(p=>p.id!==person.id);ctx.invalidate();},'button text-button'));
+  }),button('移除',()=>{ctx.session.people=ctx.session.people.filter(p=>p.id!==person.id||p.groupId!==person.groupId);ctx.invalidate();},'button text-button'));
   return row;
 }

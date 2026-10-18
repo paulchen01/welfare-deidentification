@@ -18,7 +18,7 @@ export function mountWelfareApp(host:HTMLElement):UIContext {
       // Capture selections and form values before replacing their DOM nodes.
       const pending=work(signal);ctx.render();
       void pending.catch((error:unknown)=>{if(current===generation)ctx.notify(error instanceof Error?error.message:'處理失敗，請檢查內容後重試');})
-        .finally(()=>{if(current===generation){ctx.busy=false;ctx.render();}});
+        .finally(()=>{if(current===generation){abort=undefined;ctx.busy=false;ctx.render();}});
     },
     invalidate(){session.reanalyseAll();ctx.render();},
     clear(){generation++;abort?.abort();abort=undefined;session.clear();ctx.rawInput='';restore=emptyRestore();ctx.busy=false;ctx.view='input';status='已清除本頁工作資料。已下載的檔案需自行管理。';ctx.render();},
@@ -39,7 +39,7 @@ export function mountWelfareApp(host:HTMLElement):UIContext {
         const result=await parseSafeDocument(file,{ocr:{signal,onProgress:p=>ctx.notify(`PDF 辨識 · 第 ${p.page} / ${p.pages} 頁 · ${Math.round(p.progress*100)}%`)}});
         if(signal.aborted)break;session.add(result.document,result.report);added++;
       }
-      if(!signal.aborted){ctx.view='people';ctx.notify(`已加入 ${added} 份文件`);}abort=undefined;
+      if(!signal.aborted){ctx.view='people';ctx.notify(`已加入 ${added} 份文件`);}
     });},
     render(){
       const shell=node('div','workspace');const sidebar=node('aside','sidebar');
