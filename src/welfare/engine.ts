@@ -23,7 +23,9 @@ function checkSpan(text: string, start: number, end: number): void {
 /** Candidates never imply a confirmed identity, relationship or nickname linkage. */
 export function proposePeople(text: string, groupId: string): Person[] {
   const result: Person[] = [];
-  const re = new RegExp(`(?:${LABELS})[\\t ]*[:：][\\t ]*([\\p{Script=Han}A-Za-zÀ-ž][\\p{L}·・'’ -]{0,59})`, 'gu');
+  // The next labeled field ends a value even if its separator is a space.
+  // Spaces within foreign names remain valid until that explicit field boundary.
+  const re = new RegExp(`(?:${LABELS})[\\t ]*[:：][\\t ]*([\\p{Script=Han}A-Za-zÀ-ž][\\p{L}·・'’ -]{0,59}?)(?=[\\t ]+[\\p{L}]{1,20}[\\t ]*[:：]|[^\\p{L}·・'’ -]|$)`, 'gu');
   for (const m of text.matchAll(re)) {
     const name = m[1].trim().split(/(?:表示|同意|於|已|接受|診斷|目前|今年|就讀|居住|任職)/u)[0].trim();
     if (/^[\p{Script=Han}·・]+$/u.test(name) && name.length > 8) continue;
@@ -116,11 +118,16 @@ export function detectWelfare(text: string, config: DetectionConfig): WelfareFin
         message: ambiguous ? `姓名或別名歧義：同一文字對應多位已確認人物。${NOTICE}` : NOTICE });
     }
   }
-  for (const m of text.matchAll(/(?<!\d)(?:民國[\t ]*)?(\d{2,4})[\t ]*(?:年|[-/.])[\t ]*(\d{1,2})[\t ]*(?:月|[-/.])[\t ]*(\d{1,2})(?:[\t ]*日)?(?!\d)/gu)) {
-    const year = Number(m[1]), month = Number(m[2]), day = Number(m[3]), ceYear = year < 1911 ? year + 1911 : year;
-    const date = new Date(Date.UTC(ceYear, month - 1, day));
+  for (const m of text.matchAll(/(?<!\d)(?:(民國)[\t ]*)?(\d{2,4})[\t ]*(?:年|[-/.])[\t ]*(\d{1,2})[\t ]*(?:月|[-/.])[\t ]*(\d{1,2})(?:[\t ]*日)?(?!\d)/gu)) {
+    // An explicit ROC prefix takes precedence; otherwise four digits denote CE,
+    // and the supported two/three-digit local date forms denote ROC.
+    const roc = m[1] !== undefined || m[2].length < 4;
+    const year = Number(m[2]), month = Number(m[3]), day = Number(m[4]), ceYear = roc ? year + 1911 : year;
+    if (year < 1) continue;
+    const date = new Date(0);
+    date.setUTCFullYear(ceYear, month - 1, day);
     if (date.getUTCFullYear() !== ceYear || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) continue;
-    const generalized = `${year < 1911 ? '民國' : ''}${year}年${month}月${day <= 10 ? '上旬' : day <= 20 ? '中旬' : '下旬'}`;
+    const generalized = `${roc ? '民國' : ''}${year}年${month}月${day <= 10 ? '上旬' : day <= 20 ? '中旬' : '下旬'}`;
     add(m.index!, m.index! + m[0].length, '日期', 30, { generalized, action: config.purpose === 'public' ? 'generalize' : config.purpose === 'internal' ? 'keep' : 'mask' });
   }
   for (const m of text.matchAll(/(?<!\d)(\d{1,3})歲(?!\d)/gu)) {

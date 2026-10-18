@@ -36,6 +36,20 @@ describe('social welfare de-identification', () => {
   it('masks detected unconfirmed labeled names wherever repeated', () => {
     expect(redact('案主：王小明。王小明同意服務。')).toBe('案主：[姓名]。[姓名]同意服務。');
   });
+  it('ends candidate names before adjacent fields while preserving foreign multiword names', () => {
+    const cases = [
+      ['案主：王小明 聯絡電話：0912345678。王小明同意後續服務。', '王小明'],
+      ['案主：Maria de la Cruz 聯絡電話：0912345678。Maria de la Cruz同意後續服務。', 'Maria de la Cruz'],
+      ['案主：王小明 案母：林秀英；王小明與林秀英會談。', '王小明'],
+    ];
+    for (const [text, name] of cases) {
+      expect(proposePeople(text, 'g')[0]?.name).toBe(name);
+      expect(redact(text)).not.toContain(name);
+      expect(redact(text)).not.toContain('0912345678');
+    }
+    expect(redact(cases[0][0])).toBe('案主：[姓名] 聯絡電話：[手機]。[姓名]同意後續服務。');
+    expect(proposePeople('案主：Maria de la Cruz；社工：陳美玲。', 'g').map(p => p.name)).toEqual(['Maria de la Cruz', '陳美玲']);
+  });
   it('does not guess ordinary Chinese prose as names', () => {
     const text = '高雄方案採用社區工作方法，家庭支持持續進行，林業與文化活動可供討論。';
     expect(redact(text)).toBe(text);
@@ -54,6 +68,23 @@ describe('social welfare de-identification', () => {
   it('preserves spaces adjoining dates and rejects invalid calendar dates', () => {
     expect(redact('於 2026-10-02 訪視。')).toBe('於 [日期] 訪視。');
     expect(redact('2026-02-30')).toBe('2026-02-30');
+  });
+  it('distinguishes four-digit CE years from explicit and short-form ROC years without consuming spaces', () => {
+    for (const [date, expected] of [
+      ['1900-01-02', '1900年1月上旬'],
+      ['1910年1月2日', '1910年1月上旬'],
+      ['2026/10/23', '2026年10月下旬'],
+      ['民國 115 年 10 月 02 日', '民國115年10月上旬'],
+      ['115-10-02', '民國115年10月上旬'],
+      ['80年05月12日', '民國80年5月中旬'],
+    ]) {
+      const text = `於 ${date} 訪視。`;
+      const fs = detectWelfare(text, cfg([], 'public')).filter(f => f.category === '日期');
+      expect(fs, date).toHaveLength(1);
+      expect(fs[0].original, date).toBe(date);
+      expect(fs[0].generalized, date).toBe(expected);
+      expect(renderText(text, fs), date).toBe(`於 ${expected} 訪視。`);
+    }
   });
   it('fully masks identifiers, phone variants, email, ARC and labeled accounts', () => {
     const text = '身分證：A123456789；居留證：AB12345678；手機0912-345-678；市話(02)2712-3456；信箱ann@example.org；銀行帳號：012-3456789012';
