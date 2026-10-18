@@ -17,7 +17,7 @@
 2. 文件邊界（`src/welfare/document-safety.ts`、`src/formats/pdf.ts`）：檢查 Word／Excel 封裝、逐頁 PDF／OCR、預設移除圖片、保守拒絕不完整原格式輸出。詳細契約在開始此任務前寫入 `task-2-brief.md`。
 3. 匯出與機構設定（`src/welfare/export.ts`、`vault.ts`、`profile.ts`）：安全名稱、分享包、獨立加密對照檔、嚴格還原與不含個案的範本。
 4. 操作介面（`src/welfare/app.ts`、`app.css`、`src/main.ts`、`index.html`）：用途／文件種類、人物設定、並排覆核、人工圈選、批次管理、格式檢查與還原。
-5. 驗收與交付（`scripts/verify-welfare.mjs`、`scripts/serve-local.mjs`、`README.md`、`docs/`）：實際 UI、導出檔、斷網與不外傳檢查，產出使用說明與可在內網運行的包。
+5. 驗收與交付（`tests/browser/harness.ts`、`scripts/verify-local.mjs`、`scripts/verify-package.mjs`、`scripts/serve-local.mjs`、`README.md`、`docs/`）：實際 UI、導出檔、本機資產及外連限制檢查，產出使用說明與可攜式本機包。實體斷網與指定內網部署另列待驗證。
 
 各行為先寫有意義的失敗測試，再實作、跑限定測試；最後跑全套與建置。核心與格式任務各經獨立閱讀審查，整合後再做完整審查。原有上游功能的測試保留，針對改變的產品入口更新內容測試。
 
