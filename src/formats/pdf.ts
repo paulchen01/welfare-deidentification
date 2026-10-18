@@ -45,6 +45,8 @@ export interface PdfHandle {
 export interface ParsePdfOptions {
   /** Recognise the page images when no page has a text layer (scanned PDF); without it such a PDF is rejected. */
   ocr?: OcrOptions;
+  /** Safety workflow: recognize each textless page instead of dropping mixed-document pages. */
+  perPageOcr?: boolean;
 }
 
 function fontSizeOf(item: TextItem): number {
@@ -74,6 +76,17 @@ export async function parsePdf(file: File, opts: ParsePdfOptions = {}): Promise<
     const pdf = await task.promise;
     const pages: PdfPage[] = [];
     for (let p = 1; p <= pdf.numPages; p++) pages.push(await textLayer(await pdf.getPage(p)));
+    if (opts.perPageOcr) {
+      const pageNumbers = pages.flatMap((page, i) => hasText([page]) ? [] : [i + 1]);
+      if (pageNumbers.length) {
+        if (!opts.ocr) throw new Error('部分 PDF 頁面沒有可擷取的文字層，需要逐頁文字辨識');
+        const scanned = await (await import('./ocr')).recognizePdf(pdf, { ...opts.ocr, pageNumbers });
+        if (scanned.length !== pageNumbers.length) throw new Error('PDF 逐頁辨識結果不完整');
+        pageNumbers.forEach((number, i) => { pages[number - 1] = scanned[i]; });
+      }
+      // Even an unreadable page is retained; the safety inspector blocks incomplete exports.
+      return assemblePdf(file.name, pages, pageNumbers.length > 0);
+    }
     if (hasText(pages)) return assemblePdf(file.name, pages);
     if (!opts.ocr) throw new Error('此 PDF 沒有可擷取的文字層（可能是掃描影像）；還原請使用本工具輸出的去識別化檔案');
     const scanned = await (await import('./ocr')).recognizePdf(pdf, opts.ocr);

@@ -22,6 +22,8 @@ export interface OcrProgress {
 export interface OcrOptions {
   signal?: AbortSignal;
   onProgress?: (p: OcrProgress) => void;
+  /** One-based page selection, returned in this order; default is every page. */
+  pageNumbers?: number[];
 }
 
 export interface Box {
@@ -584,9 +586,12 @@ const RECHECK_MARGIN = 10;
  * out text-free pictures to keep in the output. Rejects with an AbortError as soon as `signal`
  * aborts; the recognisers are always shut down.
  */
-export async function recognizePdf(pdf: PDFDocumentProxy, { signal, onProgress }: OcrOptions = {}): Promise<PdfPage[]> {
+export async function recognizePdf(pdf: PDFDocumentProxy, { signal, onProgress, pageNumbers }: OcrOptions = {}): Promise<PdfPage[]> {
   const abortError = () => new DOMException('已取消辨識', 'AbortError');
   if (signal?.aborted) throw abortError();
+  const selected = pageNumbers ?? Array.from({ length: pdf.numPages }, (_, i) => i + 1);
+  if (selected.some((p) => !Number.isInteger(p) || p < 1 || p > pdf.numPages) || new Set(selected).size !== selected.length) throw new Error('OCR 頁面選取範圍無效');
+  if (!selected.length) return [];
   // Neither recognize() nor createWorker() can be interrupted: race them against the signal and
   // terminate the workers afterwards.
   let fail!: (e: unknown) => void;
@@ -596,6 +601,7 @@ export async function recognizePdf(pdf: PDFDocumentProxy, { signal, onProgress }
   const race = <T>(p: Promise<T>): Promise<T> => Promise.race([p, aborted]);
 
   const pages = pdf.numPages;
+  let selectedIndex = 0;
   let page = 0;
   let thumbnail: string | undefined;
   onProgress?.({ stage: 'engine', page, pages, progress: 0 });
@@ -614,7 +620,7 @@ export async function recognizePdf(pdf: PDFDocumentProxy, { signal, onProgress }
     ...options,
     logger: (m) => {
       if (page > 0 && m.status === 'recognizing text') {
-        onProgress?.({ stage: 'recognize', page, pages, progress: (page - 1 + m.progress) / pages, thumbnail });
+        onProgress?.({ stage: 'recognize', page, pages, progress: (selectedIndex + m.progress) / selected.length, thumbnail });
       }
     },
   });
@@ -630,12 +636,13 @@ export async function recognizePdf(pdf: PDFDocumentProxy, { signal, onProgress }
   try {
     const worker = await race(starting);
     const out: PdfPage[] = [];
-    for (page = 1; page <= pages; page++) {
+    for (selectedIndex = 0; selectedIndex < selected.length; selectedIndex++) {
+      page = selected[selectedIndex];
       const pdfPage = await race(pdf.getPage(page));
       const rendered = await race(renderPage(pdfPage));
       const { scale } = rendered;
       thumbnail = thumbnailOf(rendered.canvas);
-      const report = (step: OcrProgress['step'], done = 0) => onProgress?.({ stage: 'recognize', step, page, pages, progress: (page - 1 + done) / pages, thumbnail });
+      const report = (step: OcrProgress['step'], done = 0) => onProgress?.({ stage: 'recognize', step, page, pages, progress: (selectedIndex + done) / selected.length, thumbnail });
       report('orient');
 
       // Straighten the page: a quarter turn when its text runs up and down, then the skew (rendered
