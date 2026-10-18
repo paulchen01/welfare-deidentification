@@ -96,4 +96,21 @@ describe('mixed PDF safety', () => {
     expect(output.text).not.toContain('Secret');
     expect(picture.keep).toBe(true);
   });
+
+  it.each(['page text', 'document text', 'segments'])('rejects changed PDF %s before applying reviewed offsets', async (change) => {
+    const doc = assemblePdf('sample.pdf', [page('Secret')]);
+    const report = await inspectDocument(doc);
+    const handle = doc.handle as PdfHandle;
+    if (change === 'page text') handle.pages[0].items[0].text = 'New hidden ID A123456789';
+    if (change === 'document text') doc.text = 'New reviewed text';
+    if (change === 'segments') handle.segments[0].start = 2;
+    await expect(generateSafeDocument(doc, [{ start: 0, end: 6, replacement: '[Name1]' }], report)).rejects.toThrow(/變更|重新載入/);
+  });
+
+  it('accepts intact PDF offsets when hasEOL adds a newline between items at the same baseline', async () => {
+    const doc = assemblePdf('sample.pdf', [{ width: 400, height: 600, items: [{ ...page('First').items[0], eol: true }, { ...page('Second').items[0], x: 150 }] }]);
+    const report = await inspectDocument(doc);
+    expect(doc.text).toContain('First\nSecond');
+    expect((await generateSafeDocument(doc, [], report)).size).toBeGreaterThan(0);
+  });
 });

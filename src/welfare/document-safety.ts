@@ -16,6 +16,78 @@ const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const X = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const META = /^docProps\/(core|app|custom)\.xml$/;
 type OfficeHandle = { zip: JSZip };
+const reviewedText = new WeakMap<LoadedDocument, string>();
+const SOURCE_CHANGED = '文件來源或已覆核文字已變更，請重新載入並重新核對後輸出';
+const STYLE_REFS = new Set(['pStyle', 'rStyle', 'tblStyle', 'basedOn', 'next', 'link', 'defaultTableStyle', 'numStyleLink', 'styleLink']);
+const SAFE_NUMBERING_TEXT = /^(?:%[1-9]|[\s.、()（）\-．])*$/u;
+const WORD_NODES = new Set(('document body hdr ftr p r t tab br cr tbl tr tc pPr rPr tblPr trPr tcPr sectPr tblGrid gridCol pStyle rStyle tblStyle b bCs i iCs u strike dstrike caps smallCaps outline shadow emboss imprint noProof snapToGrid vanish webHidden color spacing sz szCs highlight vertAlign rtl cs lang rFonts kern position fitText shd bdr pBdr top left bottom right between bar ind jc tabs tab contextualSpacing keepNext keepLines pageBreakBefore widowControl numPr ilvl numId suppressLineNumbers suppressAutoHyphens bidi textDirection textAlignment outlineLvl divId cnfStyle tblW tblInd tblBorders tblCellMar tblLayout tblLook tblCaption tblDescription tcW gridSpan vMerge vAlign tcBorders noWrap tcFitText hideMark cantSplit tblHeader trHeight gridBefore gridAfter wBefore wAfter pgSz pgMar pgNumType cols col docGrid headerReference footerReference titlePg type footnotePr endnotePr pgBorders vAlign printerSettings styles style name aliases basedOn next link autoRedefine hidden uiPriority semiHidden unhideWhenUsed qFormat locked personal personalCompose personalReply rsid docDefaults rPrDefault pPrDefault latentStyles lsdException settings zoom proofState defaultTabStop characterSpacingControl compat compatSetting rsids rsidRoot themeFontLang clrSchemeMapping doNotTrackMoves doNotTrackFormatting trackRevisions updateFields displayBackgroundShape evenAndOddHeaders mirrorMargins gutterAtTop drawingGridHorizontalSpacing drawingGridVerticalSpacing decimalSymbol listSeparator doNotAutoHyphenateConsecutiveUppercase hyphenationZone defaultTableStyle attachedTemplate webSettings optimizeForBrowser allowPNG fonts font altName charset family pitch panose1 sig notTrueType embedRegular embedBold embedItalic embedBoldItalic numbering abstractNum multiLevelType nsid tmpl numStyleLink styleLink lvl start numFmt lvlRestart lvlText lvlJc suff num lvlOverride startOverride').split(' '));
+const WORD_ATTRIBUTES = new Set(('val type w h top right bottom left header footer gutter orient line lineRule before after beforeLines afterLines firstLine hanging firstLineChars hangingChars start end startChars endChars space size sz color fill themeColor themeTint themeShade asciiTheme hAnsiTheme eastAsiaTheme cstheme hint eastAsia cs ascii hAnsi anchor align pos leader ilvl numId abstractNumId ilvl restart startOverride numFmt chapStyle chapSep id customStyle default styleId qFormat uiPriority semiHidden unhideWhenUsed locked personal personalCompose personalReply count min max defLockedState defUIPriority defSemiHidden defUnhideWhenUsed defQFormat exceptions name font script charType charSpace linePitch num pos hRule gridSpan merge typeface pitchFamily charset sig usb0 usb1 usb2 usb3 csb0 csb1 uri namePercent percent zoom lang script').split(' '));
+const SAFE_TOKENS = new Set(('true false on off none auto default normal paragraph character table numbering left right center both justify start end top bottom middle single double thick dotted dashed dotDash dotDotDash wave dashSmallGap thinThickSmallGap thickThinSmallGap thickThinMedGap thickThinLargeGap nil clear decimal decimalZero upperRoman lowerRoman upperLetter lowerLetter bullet ordinal cardinalText ordinalText hex chicago ideographDigital japaneseCounting aiueo iroha decimalFullWidth decimalHalfWidth decimalEnclosedCircle chineseCounting chineseLegalSimplified chineseCountingThousand taiwaneseCounting taiwaneseCountingThousand numInDash decimalEnclosedCircleChinese decimalEnclosedFullstop decimalEnclosedParen decimalNumber limit thaiNumbers hindiNumbers hAnsi eastAsia bidi minorHAnsi majorHAnsi minorEastAsia majorEastAsia minorBidi majorBidi majorAscii minorAscii dxa pct exact atLeast atMost multiple singleLine fixed autofit baseline superscript subscript landscape portrait continuous nextPage evenPage oddPage text column page line lrTb tbRl btLr lrTbV tbRlV tbLrV tab space nothing multilevel singleLevel hybridMultilevel modern roman swiss script decorative unknown variable fixedPitch black white red blue green yellow magenta cyan darkBlue darkCyan darkGreen darkMagenta darkRed darkYellow darkGray lightGray windowText window background1 text1 background2 text2 accent1 accent2 accent3 accent4 accent5 accent6 hyperlink followedHyperlink phClr lt1 dk1 lt2 dk2').split(' '));
+function authorAttribute(attr: Attr): boolean { return ['author', 'initials', 'lastModifiedBy', 'userName', 'paraId', 'textId', 'docId'].includes(attr.localName) || /^rsid/i.test(attr.localName); }
+function neutralWordAttribute(el: Element, attr: Attr): boolean {
+  return el.namespaceURI === W && ((el.localName === 'style' && attr.localName === 'styleId') || (STYLE_REFS.has(el.localName) && attr.localName === 'val') || (['name', 'aliases', 'altName'].includes(el.localName) && attr.localName === 'val') || (['font', 'lsdException'].includes(el.localName) && attr.localName === 'name') || (el.localName === 'rFonts' && ['ascii', 'hAnsi', 'eastAsia', 'cs'].includes(attr.localName))) || /\/drawingml\/2006\/main$/.test(el.namespaceURI ?? '') && ['name', 'typeface'].includes(attr.localName);
+}
+/** Text-like metadata is neutralized; remaining Word XML needs known nodes and
+ * typed formatting attributes. Unknown attributes are never covered by a part allowlist. */
+function hasUnreviewedWordData(part: Document, path: string): boolean {
+  if (!path.startsWith('word/')) return false;
+  for (const el of Array.from(part.getElementsByTagName('*'))) {
+    if (el.namespaceURI === W && !WORD_NODES.has(el.localName)) return true;
+    if (Array.from(el.childNodes).some((node) => (node.nodeType === Node.TEXT_NODE || node.nodeType === Node.CDATA_SECTION_NODE) && !!node.textContent?.trim() && !(el.namespaceURI === W && el.localName === 't'))) return true;
+    for (const attr of Array.from(el.attributes)) {
+      if (attr.namespaceURI === 'http://www.w3.org/2000/xmlns/' || authorAttribute(attr) || neutralWordAttribute(el, attr)) continue;
+      if (attr.namespaceURI === 'http://www.w3.org/XML/1998/namespace' && attr.localName === 'space' && ['preserve', 'default'].includes(attr.value)) continue;
+      if (attr.namespaceURI === 'http://schemas.openxmlformats.org/markup-compatibility/2006' && attr.localName === 'Ignorable') continue;
+      if (path.endsWith('.rels')) continue; // Relationship values are checked separately.
+      if (attr.namespaceURI === 'http://schemas.openxmlformats.org/officeDocument/2006/relationships' && attr.localName === 'id' && /^rId\d{1,6}$/.test(attr.value)) continue;
+      if (attr.localName === 'name') {
+        if (el.localName !== 'compatSetting' || !['compatibilityMode', 'overrideTableStyleFontSizeAndJustification', 'enableOpenTypeFeatures', 'doNotFlipMirrorIndents', 'differentiateMultirowTableHeaders'].includes(attr.value)) return true;
+        continue;
+      }
+      if (attr.localName === 'styleId') return true; // Only style/@styleId is neutralized above.
+      if (attr.localName === 'uri') { if (el.localName !== 'compatSetting' || attr.value !== 'http://schemas.microsoft.com/office/word') return true; continue; }
+      if (!WORD_ATTRIBUTES.has(attr.localName)) return true;
+      if (el.localName === 'lvlText' && attr.localName === 'val') { if (!SAFE_NUMBERING_TEXT.test(attr.value)) return true; continue; }
+      if (['lang', 'themeFontLang'].includes(el.localName) && /^[a-z]{2,3}(?:-[A-Za-z]{2,4})?$/.test(attr.value)) continue;
+      if (['color', 'shd'].includes(el.localName) && /^[a-f\d]{6}$/i.test(attr.value)) continue;
+      if ((el.localName === 'panose1' && /^[a-f\d]{20}$/i.test(attr.value)) || (['nsid', 'tmpl'].includes(el.localName) && /^[a-f\d]{8}$/i.test(attr.value))) continue;
+      if (['decimalSymbol', 'listSeparator'].includes(el.localName) && /^[.,;]$/.test(attr.value)) continue;
+      if (/^-?\d{1,6}(?:\.\d{1,3})?$/.test(attr.value) || SAFE_TOKENS.has(attr.value)) continue;
+      if (attr.localName === 'script' && /^[A-Z][a-z]{3}$/.test(attr.value)) continue;
+      return true;
+    }
+  }
+  return false;
+}
+function hasUnreviewedPackageData(part: Document, path: string, parts: Map<string, Uint8Array>): boolean {
+  if (path !== '[Content_Types].xml' && !path.endsWith('.rels')) return false;
+  const relationship = path.endsWith('.rels');
+  const allowedNames = relationship ? ['Relationships', 'Relationship'] : ['Types', 'Default', 'Override'];
+  const types = new Set(['application/xml', 'application/vnd.openxmlformats-package.relationships+xml', 'application/vnd.openxmlformats-officedocument.theme+xml', ...['document.main', 'styles', 'settings', 'webSettings', 'fontTable', 'numbering', 'header', 'footer'].map((name) => `application/vnd.openxmlformats-officedocument.wordprocessingml.${name}+xml`), ...['sheet.main', 'worksheet', 'sharedStrings', 'styles'].map((name) => `application/vnd.openxmlformats-officedocument.spreadsheetml.${name}+xml`)]);
+  for (const el of Array.from(part.getElementsByTagName('*'))) {
+    if (!allowedNames.includes(el.localName) || el.textContent?.trim()) return true;
+    const metadata = relationship ? /\/(core-properties|extended-properties|custom-properties)$/.test(el.getAttribute('Type') ?? '') : META.test((el.getAttribute('PartName') ?? '').replace(/^\//, ''));
+    if (metadata) continue; // The complete metadata relation/declaration is removed.
+    const attrs = el.localName === 'Relationship' ? ['Id', 'Type', 'Target', 'TargetMode'] : el.localName === 'Default' ? ['Extension', 'ContentType'] : el.localName === 'Override' ? ['PartName', 'ContentType'] : [];
+    if (Array.from(el.attributes).some((attr) => attr.namespaceURI !== 'http://www.w3.org/2000/xmlns/' && !attrs.includes(attr.name))) return true;
+    if (el.localName === 'Relationship') {
+      if (!/^rId\d{1,6}$/.test(el.getAttribute('Id') ?? '') || !/^http:\/\/schemas\.openxmlformats\.org\/officeDocument\/2006\/relationships\/[a-zA-Z]+$/.test(el.getAttribute('Type') ?? '')) return true;
+      const target = el.getAttribute('Target') ?? '';
+      const base = path === '_rels/.rels' ? [] : path.split('/_rels/')[0].split('/');
+      const resolved = target.startsWith('/') ? [] : [...base];
+      for (const component of target.split('/')) {
+        if (!component || component === '.') continue;
+        if (component === '..') resolved.pop(); else resolved.push(component);
+      }
+      if (!parts.has(resolved.join('/'))) return true;
+    } else if (el.localName === 'Default' || el.localName === 'Override') {
+      if (!types.has(el.getAttribute('ContentType') ?? '')) return true;
+      if (el.localName === 'Default' && !['xml', 'rels'].includes(el.getAttribute('Extension') ?? '')) return true;
+      if (el.localName === 'Override' && !parts.has((el.getAttribute('PartName') ?? '').replace(/^\//, ''))) return true;
+    }
+  }
+  return false;
+}
 
 function xml(value: string): Document {
   if (/<!DOCTYPE|<!ENTITY/i.test(value)) throw new Error('文件含不支援的 XML 結構');
@@ -116,6 +188,7 @@ async function inspectOffice(doc: LoadedDocument): Promise<FormatSafetyReport> {
     }
     const part = xml(new TextDecoder().decode(bytes));
     if (META.test(path)) { add('metadata-cleaned', '輸出將移除文件屬性與作者等中繼資料', 'info'); continue; }
+    if (hasUnreviewedPackageData(part, path, parts)) add('unreviewed-package-fields', '文件封裝清單含未知屬性、類型或未完整涵蓋的關聯，已阻擋原格式輸出');
     const hiddenNodes = part.createTreeWalker(part, NodeFilter.SHOW_COMMENT | NodeFilter.SHOW_PROCESSING_INSTRUCTION);
     if (hiddenNodes.nextNode()) add('hidden-xml', '文件 XML 含註解或處理指令，隱藏內容未納入預覽');
     if (path.endsWith('.rels')) {
@@ -126,12 +199,14 @@ async function inspectOffice(doc: LoadedDocument): Promise<FormatSafetyReport> {
       }
     }
     if (doc.format === 'docx') {
+      if (hasUnreviewedWordData(part, path)) add('unreviewed-word-fields', 'Word 含未納入預覽的書籤、文字屬性或不支援的 XML 欄位，已阻擋原格式輸出');
+      add('word-labels-cleaned', '安全輸出會中性化樣式名稱、樣式識別碼、主題標籤與字型名稱，版面可能改變', 'info');
       if (/^word\/(document|header\d*|footer\d*)\.xml$/.test(path) && part.documentElement.namespaceURI !== W) add('unsupported-schema', '文件正文使用不支援的 XML 格式，無法完整擷取');
       if (elements(part, ['del', 'delText', 'delInstrText', 'ins', 'moveFrom', 'moveTo', 'moveFromRangeStart', 'moveToRangeStart', 'pPrChange', 'rPrChange', 'tblPrChange', 'sectPrChange', 'cellIns', 'cellDel', 'cellMerge', 'tblPrExChange', 'tcPrChange', 'trPrChange', 'tblGridChange', 'numberingChange'])) add('revisions', 'Word 含修訂、刪除或移動記錄，舊內容未納入預覽');
       if (elements(part, ['commentRangeStart', 'commentReference', 'footnoteReference', 'endnoteReference'])) add('notes', 'Word 含註解或附註參照，內容未完整納入預覽');
-      if (elements(part, ['txbxContent', 'textbox', 'Fallback', 'AlternateContent', 'instrText', 'fldSimple', 'fldChar', 'altChunk', 'sdt', 'drawing', 'pict', 'object', 'subDoc', 'docVars', 'dataBinding', 'mailMerge', 'hyperlink'])) add('unsupported-word-text', 'Word 含文字方塊、欄位指令、繪圖、超連結或特殊文字結構，無法確認完整涵蓋');
+      if (elements(part, ['txbxContent', 'textbox', 'Fallback', 'AlternateContent', 'instrText', 'fldSimple', 'fldChar', 'altChunk', 'sdt', 'drawing', 'pict', 'object', 'subDoc', 'docVars', 'dataBinding', 'mailMerge', 'hyperlink', 'tblCaption', 'tblDescription'])) add('unsupported-word-text', 'Word 含文字方塊、欄位指令、繪圖、超連結或特殊文字結構，無法確認完整涵蓋');
       if (elements(part, ['vanish', 'webHidden', 'specVanish'])) add('hidden-word-text', 'Word 含隱藏文字或隱藏樣式，請核對擷取文字');
-      if (Array.from(part.getElementsByTagNameNS(W, 'lvlText')).some((el) => /[^\d%\s.、()（）\-．]/u.test(el.getAttributeNS(W, 'val') ?? ''))) add('uncovered-numbering', 'Word 編號含自訂文字，未納入文字偵測');
+      if (Array.from(part.getElementsByTagNameNS(W, 'lvlText')).some((el) => !SAFE_NUMBERING_TEXT.test(el.getAttributeNS(W, 'val') ?? ''))) add('uncovered-numbering', 'Word 編號含自訂文字，未納入文字偵測');
       if (!/^word\/(document|header\d*|footer\d*)\.xml$/.test(path) && part.getElementsByTagNameNS(W, 't').length) add('uncovered-word-text', 'Word 的非正文項目含文字，未完整納入預覽');
     } else {
       if (/^xl\/(workbook|sharedStrings|styles|worksheets\/sheet\d+)\.xml$/.test(path) && part.documentElement.namespaceURI !== X) add('unsupported-schema', '試算表使用不支援的 XML 格式，無法完整擷取');
@@ -156,6 +231,7 @@ async function inspectOffice(doc: LoadedDocument): Promise<FormatSafetyReport> {
 }
 
 export async function inspectDocument(doc: LoadedDocument): Promise<FormatSafetyReport> {
+  if (!reviewedText.has(doc)) reviewedText.set(doc, doc.text);
   if (doc.format === 'docx' || doc.format === 'xlsx') return inspectOffice(doc);
   if (doc.format === 'pdf') {
     const pages = (doc.handle as PdfHandle)?.pages;
@@ -201,9 +277,25 @@ function checkedOriginals(doc: LoadedDocument, edits: TextEdit[]): string[] {
 function rejectRemnants(texts: string[], originals: string[]): void {
   if (originals.some((value) => texts.some((text) => text.includes(value)))) throw new Error('安全檢查發現選取的原值仍有殘留，已阻擋輸出');
 }
+function checkedPdfHandle(doc: LoadedDocument): PdfHandle {
+  const handle = doc.handle as PdfHandle;
+  const expected = handle.pages.flatMap((page, p) => page.items.map((item, i) => ({ item, p, i })));
+  if (expected.length !== handle.segments.length || expected.length !== handle.itemPage.length || expected.length !== handle.itemIndex.length) throw new Error(SOURCE_CHANGED);
+  let end = 0;
+  for (const [index, { item, p, i }] of expected.entries()) {
+    const segment = handle.segments[index];
+    if (!Number.isInteger(segment.start) || !Number.isInteger(segment.end) || segment.start < end || segment.end > doc.text.length || segment.end - segment.start !== item.text.length || handle.itemPage[index] !== p || handle.itemIndex[index] !== i || segment.text !== item.text || doc.text.slice(segment.start, segment.end) !== item.text || doc.text.slice(end, segment.start).trim()) throw new Error(SOURCE_CHANGED);
+    end = segment.end;
+  }
+  if (doc.text.slice(end).trim()) throw new Error(SOURCE_CHANGED);
+  return { ...handle, segments: handle.segments.map((segment) => ({ ...segment })), itemPage: [...handle.itemPage], itemIndex: [...handle.itemIndex], pages: handle.pages.map((page) => ({ ...page, items: page.items.map((item) => ({ ...item })), pictures: [] })) };
+}
 
 async function sanitizeOffice(zip: JSZip, format: 'docx' | 'xlsx'): Promise<void> {
   (zip as JSZip & { comment: string }).comment = '';
+  const styleIds = new Map<string, string>();
+  let labelId = 0;
+  const safeStyle = (value: string) => { if (!styleIds.has(value)) styleIds.set(value, `SafeStyle${styleIds.size + 1}`); return styleIds.get(value)!; };
   for (const entry of Object.values(zip.files)) {
     entry.comment = '';
     if (entry.dir) continue;
@@ -211,7 +303,10 @@ async function sanitizeOffice(zip: JSZip, format: 'docx' | 'xlsx'): Promise<void
     const part = xml(await entry.async('string'));
     for (const el of Array.from(part.getElementsByTagName('*'))) {
       // These attributes describe edit history/authorship rather than document content.
-      for (const attr of Array.from(el.attributes)) if (['author', 'initials', 'lastModifiedBy', 'userName'].includes(attr.localName) || /^rsid/i.test(attr.localName)) el.removeAttributeNode(attr);
+      for (const attr of Array.from(el.attributes)) {
+        if (authorAttribute(attr)) { el.removeAttributeNode(attr); continue; }
+        if (format === 'docx' && neutralWordAttribute(el, attr)) attr.value = el.localName === 'style' || STYLE_REFS.has(el.localName) ? safeStyle(attr.value) : ['font', 'rFonts', 'altName', 'latin', 'ea', 'cs'].includes(el.localName) || attr.localName === 'typeface' ? 'Noto Sans TC' : `中性樣式${++labelId}`;
+      }
       if (entry.name === '[Content_Types].xml' && el.localName === 'Override' && META.test((el.getAttribute('PartName') ?? '').replace(/^\//, ''))) el.remove();
       if (entry.name.endsWith('.rels') && el.localName === 'Relationship' && /\/(core-properties|extended-properties|custom-properties)$/.test(el.getAttribute('Type') ?? '')) el.remove();
     }
@@ -221,6 +316,7 @@ async function sanitizeOffice(zip: JSZip, format: 'docx' | 'xlsx'): Promise<void
 }
 
 export async function generateSafeDocument(doc: LoadedDocument, edits: TextEdit[], _report: FormatSafetyReport): Promise<Blob> {
+  if (reviewedText.has(doc) && reviewedText.get(doc) !== doc.text) throw new Error(SOURCE_CHANGED);
   const report = await inspectDocument(doc);
   if (!report.nativeAllowed) throw new Error('原格式輸出未通過結構涵蓋檢查，請核對後改用擷取文字輸出');
   const originals = checkedOriginals(doc, edits);
@@ -232,6 +328,7 @@ export async function generateSafeDocument(doc: LoadedDocument, edits: TextEdit[
     for (const [path, bytes] of await boundedParts(source)) freshZip.file(path, bytes);
     const bytes = await freshZip.generateAsync({ type: 'uint8array' });
     const fresh = await parseDocument(new File([bytes as BlobPart], `document.${doc.format}`));
+    if (fresh.text !== doc.text) throw new Error(SOURCE_CHANGED);
     const result = await generateDocument(fresh, edits);
     const output = await JSZip.loadAsync(await result.arrayBuffer());
     await sanitizeOffice(output, doc.format);
@@ -256,8 +353,7 @@ export async function generateSafeDocument(doc: LoadedDocument, edits: TextEdit[
     return blob;
   }
   if (doc.format === 'pdf') {
-    const handle = doc.handle as PdfHandle;
-    const safeDoc = { ...doc, handle: { ...handle, pages: handle.pages.map((page) => ({ ...page, pictures: [] })) } };
+    const safeDoc = { ...doc, handle: checkedPdfHandle(doc) };
     const output = await generateDocument(safeDoc, edits);
     const parsed = await parseDocument(new File([output], 'document.pdf'));
     rejectRemnants([parsed.text], originals);

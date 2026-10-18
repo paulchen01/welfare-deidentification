@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { buildDocx, toFile } from '../helpers/docx-builder';
 import { buildXlsx, toXlsxFile } from '../helpers/xlsx-builder';
@@ -19,6 +20,12 @@ async function unpack(blob: Blob) { return JSZip.loadAsync(await blob.arrayBuffe
 const edit = { start: 0, end: 3, replacement: '[姓名1]' };
 
 describe('native document safety', () => {
+  it.each(['tests/fixtures/sample.docx'])('keeps ordinary bundled Word %s eligible for native export', async (path) => {
+    const { document: doc, report } = await parseSafeDocument(toFile(new Uint8Array(readFileSync(path)), 'sample.docx'));
+    expect(report.nativeAllowed, JSON.stringify(report.issues)).toBe(true);
+    const output = await generateSafeDocument(doc, [], report);
+    expect(output.size).toBeGreaterThan(0);
+  });
   it('exports a clean Word on independent ZIP clones and removes metadata', async () => {
     const { document: doc, report } = await parseSafeDocument(await word((zip) => {
       zip.file('docProps/core.xml', '<cp:coreProperties xmlns:cp="urn:cp"><creator>秘密作者</creator></cp:coreProperties>');
@@ -119,11 +126,72 @@ describe('native document safety', () => {
     expect(JSON.stringify(report)).not.toMatch(/秘密|Sheet1/);
   });
 
-  it('rejects selected originals remaining in another run or an XML attribute', async () => {
+  it('cleans source values used only in style labels rather than preserving them invisibly', async () => {
     const { document: doc, report } = await parseSafeDocument(await word(async (zip) => {
-      zip.file('word/styles.xml', (await zip.file('word/styles.xml')!.async('string')).replace('Normal"/>', '王小明"/>'));
+      zip.file('word/styles.xml', (await zip.file('word/styles.xml')!.async('string')).replace('Normal"/>', 'A123456789"/>'));
     }));
-    await expect(generateSafeDocument(doc, [edit], report)).rejects.toThrow(/殘留/);
+    expect(doc.text).not.toContain('A123456789');
+    const output = await unpack(await generateSafeDocument(doc, [edit], report));
+    expect(await output.file('word/styles.xml')!.async('string')).not.toContain('A123456789');
+  });
+
+  it.each([
+    ['bookmark', '<w:bookmarkStart w:id="1" w:name="A123456789"/><w:bookmarkEnd w:id="1"/>'],
+    ['unknown attribute', '<w:p w:private="A123456789"><w:r><w:t>一般文字</w:t></w:r></w:p>'],
+    ['unknown element text', '<w:private>A123456789</w:private>'],
+    ['unknown attribute on known element', '<w:p w:name="A123456789"/>'],
+    ['known enum in an invalid text-field location', '<w:p w:name="roman"/>'],
+  ])('blocks unextracted Word %s without disclosing its contents', async (_, payload) => {
+    const { document: doc, report } = await parseSafeDocument(await word(async (zip) => {
+      zip.file('word/document.xml', (await zip.file('word/document.xml')!.async('string')).replace('<w:sectPr/>', payload + '<w:sectPr/>'));
+    }));
+    expect(doc.text).not.toContain('A123456789');
+    expect(report.nativeAllowed).toBe(false);
+    expect(JSON.stringify(report)).not.toContain('A123456789');
+    await expect(generateSafeDocument(doc, [edit], { nativeAllowed: true, issues: [] })).rejects.toThrow(/原格式/);
+  });
+
+  it('rejects changed Word source text before applying stale reviewed offsets', async () => {
+    const { document: doc, report } = await parseSafeDocument(await word());
+    const changed = await JSZip.loadAsync(await buildDocx({ paragraphs: [['李小華聯絡資料 A123456789']] }));
+    (doc.handle as { zip: JSZip }).zip.file('word/document.xml', await changed.file('word/document.xml')!.async('string'));
+    await expect(generateSafeDocument(doc, [edit], report)).rejects.toThrow(/變更|重新載入/);
+  });
+
+  it('rejects changed Excel source strings before applying stale reviewed offsets', async () => {
+    const { document: doc, report } = await parseSafeDocument(await excel());
+    const zip = (doc.handle as { zip: JSZip }).zip;
+    zip.file('xl/sharedStrings.xml', (await zip.file('xl/sharedStrings.xml')!.async('string')).replace('王小明', '李小華 A123456789'));
+    await expect(generateSafeDocument(doc, [edit], report)).rejects.toThrow(/變更|重新載入/);
+  });
+
+  it('cleans custom Word style IDs, linked styles and font labels consistently', async () => {
+    const { document: doc, report } = await parseSafeDocument(await word(async (zip) => {
+      zip.file('word/document.xml', (await zip.file('word/document.xml')!.async('string')).replace('w:val="Normal"', 'w:val="A123456789"').replace('<w:b/>', '<w:b/><w:rFonts w:ascii="B123456789" w:eastAsia="B123456789"/>'));
+      zip.file('word/styles.xml', (await zip.file('word/styles.xml')!.async('string')).replace('w:styleId="Normal"', 'w:styleId="A123456789"'));
+    }));
+    expect(report.nativeAllowed).toBe(true);
+    const output = await unpack(await generateSafeDocument(doc, [edit], report));
+    const documentXml = await output.file('word/document.xml')!.async('string');
+    const styles = await output.file('word/styles.xml')!.async('string');
+    expect(documentXml + styles).not.toMatch(/A123456789|B123456789/);
+    const id = new DOMParser().parseFromString(documentXml, 'application/xml').getElementsByTagNameNS(W, 'pStyle')[0].getAttributeNS(W, 'val');
+    expect(styles).toContain(`w:styleId="${id}"`);
+  });
+
+  it('rejects coherent changes to both reviewed text and the source ZIP', async () => {
+    const { document: doc, report } = await parseSafeDocument(await word());
+    const source = (doc.handle as { zip: JSZip }).zip;
+    source.file('word/document.xml', (await source.file('word/document.xml')!.async('string')).replace('王小明', '李小華'));
+    doc.text = doc.text.replace('王小明', '李小華');
+    await expect(generateSafeDocument(doc, [edit], report)).rejects.toThrow(/變更|重新載入/);
+  });
+
+  it.each(['_rels/.rels', '[Content_Types].xml'])('blocks unreviewed attributes inside package manifest %s', async (path) => {
+    const { report } = await parseSafeDocument(await word(async (zip) => {
+      zip.file(path, (await zip.file(path)!.async('string')).replace(path.endsWith('.rels') ? '<Relationships ' : '<Types ', path.endsWith('.rels') ? '<Relationships private="A123456789" ' : '<Types private="A123456789" '));
+    }));
+    expect(report.nativeAllowed).toBe(false);
   });
 
   it('rechecks modified handles instead of trusting earlier inspection', async () => {
@@ -157,6 +225,13 @@ describe('native document safety', () => {
   it('blocks unsupported custom numbering text', async () => {
     const { report } = await parseSafeDocument(await word(async (zip) => {
       zip.file('word/numbering.xml', `<w:numbering xmlns:w="${W}"><w:abstractNum><w:lvl><w:lvlText w:val="隱藏姓名 %1"/></w:lvl></w:abstractNum></w:numbering>`);
+    }));
+    expect(report.nativeAllowed).toBe(false);
+  });
+
+  it('blocks numeric phone text stored as a fixed numbering label', async () => {
+    const { report } = await parseSafeDocument(await word((zip) => {
+      zip.file('word/numbering.xml', `<w:numbering xmlns:w="${W}"><w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:lvlText w:val="0912345678"/></w:lvl></w:abstractNum></w:numbering>`);
     }));
     expect(report.nativeAllowed).toBe(false);
   });

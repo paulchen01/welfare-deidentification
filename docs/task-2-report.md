@@ -72,3 +72,16 @@ node node_modules/typescript/bin/tsc --noEmit
 - 此檢查針對結構涵蓋與已選取的原值；不是保證自動偵測到所有個資。未知複雜結構採保守阻擋，UI 可提供已核對的擷取文字輸出。
 - 沒有新增外送、logging 或持久儲存。原 OCR 維持 `cacheMethod: 'none'`，模型、worker 與字型使用本站資產；未把個案文字或影像送到外部服務。
 - 混合 PDF 單元測試使用真 PDF parser，OCR 回傳值以替身控制頁序／空頁；另測真正 `recognizePdf` 的選頁、取消與 worker 結束。真瀏覽器 OCR 選頁辨識品質仍須父代理驗收。
+
+## 獨立 review 必修補正（2026-10-18）
+
+獨立 review 指出的兩項問題確實成立；原先通過 77 項相關測試仍未涵蓋這兩個情境。
+
+1. **未預覽 Word 屬性可能留下個資。** 新增合法書籤名稱、樣式名稱、未知文字屬性／文字節點、已知格式字詞放在錯誤欄位的探針。書籤及未知欄位現在阻擋；樣式名稱／別名、styleId 與所有支援的樣式引用一致中性化；字型名稱與主題標籤亦中性化，並以 info 明示可能改變字型與版面。允許的 Word parts 不再代表其中所有欄位一律安全：Word 節點採明確集合、屬性檢查已知欄位及格式值；非 `w:t` 的未知文字不放行。編號只允許 `%1` 至 `%9` 佔位及分隔標點，固定數字電話也阻擋；表格 caption／description 因未預覽而阻擋。封裝清單／relationship 根節點額外欄位、未知 MIME、未解析關聯也阻擋。docProps 仍整項清除，作者與編輯識別屬性移除。
+2. **原始 handle 變動可能套用過期 offset。** Word／Excel 在獨立 ZIP 重新解析後，要求 `fresh.text === doc.text` 才能套用 edits。第一次檢查時另以僅存於記憶體的 WeakMap 綁定覆核文字；同時竄改來源 ZIP 與 `doc.text` 仍拒絕。PDF 檢查每一個 page item、segment 的原文、範圍、頁碼及項目映射，並確保 segment 外只有原有分隔空白；不依賴丟失 `hasEOL` 的重新排版，避免誤擋正常換行。輸出使用複製的 PDF item／segment，圖片仍強制排除。所有變動錯誤使用不含原值的通用訊息，要求重新載入核對。
+
+RED 證據：首次 review regression run **47 tests 中 10 failed、37 passed**，重現樣式殘值、4 種未預覽欄位及 Word／Excel／PDF 可變來源。補查封裝欄位再得到 **2 failed、49 passed**；固定數字編號及錯誤文字欄位位置各有獨立 1 failed 證據。修正後全部轉 GREEN。兩個 public Word 展示檔含原本就應阻擋的頁碼欄位，沒有放寬其安全限制；另以乾淨 `tests/fixtures/sample.docx` 驗證正常 Word 原格式輸出，並測試自訂樣式 ID／引用／字型標籤一致清理。
+
+最終本次命令沿用上方 7-file 相關格式回歸命令，結果 **7 files、94 tests 通過**（安全測試 **55** 項），exit 0，2.62 秒，2026-10-18 17:53:26。`node node_modules/typescript/bin/tsc --noEmit` 亦 exit 0。本次補正未修改 `pdf.ts` 或 `ocr.ts`；真 OCR 的既有 traineddata stderr 警告及前次 6/6 結果仍如上記錄，未將警告抹除或改稱無警告。
+
+相容性界線：不在已知 Word 節點／格式欄位集合中的擴充、複雜主題或自訂設定會保守阻擋，提供核對後擷取文字輸出；不是把未知內容刪掉後標成成功。樣式及字型標籤中性化會改動文件可辨識的中繼名稱與字型選擇，使用者需核對版面。
