@@ -9,4 +9,3 @@
 - Independent whole-branch review: approved after all three Important findings were fixed; see docs/final-review.md.
 - Delivery: local preview, Windows portable ZIP, source, usage instructions and pilot checklist.
 - Pending user-arranged scope: practitioner pilot, independent real-world corpus and external hosting target. Physical network-disconnection and narrow-screen visual testing remain unverified.
-
