@@ -129,6 +129,44 @@ describe('native document safety', () => {
     expect(await (doc.handle as { zip: JSZip }).zip.file('xl/workbook.xml')!.async('string')).toContain('陳隱名');
   });
 
+  it.each([
+    ['custom workbook views', 'xl/workbook.xml', '</workbook>', '<customWorkbookViews><customWorkbookView name="陳隱名檢視" guid="{62D90FE1-EB08-431A-8F77-DA102385F56D}" windowWidth="20000" windowHeight="10000" activeSheetId="0"/></customWorkbookViews></workbook>'],
+    ['unknown workbook root attribute', 'xl/workbook.xml', '<workbook ', '<workbook private="陳隱名檢視" '],
+    ['unknown worksheet attribute', 'xl/worksheets/sheet1.xml', '<sheetData>', '<sheetData private="陳隱名檢視">'],
+    ['unknown worksheet structure', 'xl/worksheets/sheet1.xml', '</worksheet>', '<futureMetadata name="陳隱名檢視"/></worksheet>'],
+    ['unknown shared-string structure', 'xl/sharedStrings.xml', '</sst>', '<futureMetadata name="陳隱名檢視"/></sst>'],
+  ])('blocks unreviewed Excel %s under closed schemas', async (_, path, from, to) => {
+    const { document: doc, report } = await parseSafeDocument(await excel(async (zip) => { zip.file(path, (await zip.file(path)!.async('string')).replace(from, to)); }));
+    expect(doc.text).not.toContain('陳隱名');
+    expect(report.nativeAllowed).toBe(false);
+    expect(JSON.stringify(report)).not.toContain('陳隱名');
+    await expect(generateSafeDocument(doc, [edit], { nativeAllowed: true, issues: [] })).rejects.toThrow(/原格式/);
+  });
+
+  it('blocks unknown theme metadata instead of trusting a theme part filename', async () => {
+    const { report } = await parseSafeDocument(await excel((zip) => {
+      zip.file('xl/theme/theme1.xml', '<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="一般主題" private="陳隱名檢視"><a:themeElements/></a:theme>');
+    }));
+    expect(report.nativeAllowed).toBe(false);
+  });
+
+  it.each(['xl/workbook.xml', 'xl/styles.xml', '[Content_Types].xml'])('blocks arbitrary source text hidden in namespace declarations of %s', async (path) => {
+    const { report } = await parseSafeDocument(await excel(async (zip) => {
+      zip.file(path, (await zip.file(path)!.async('string')).replace('xmlns=', 'xmlns:private="urn:陳隱名檢視" xmlns='));
+    }));
+    expect(report.nativeAllowed).toBe(false);
+  });
+
+  it('keeps ordinary workbook views, worksheet layout and inline text eligible', async () => {
+    const { document: doc, report } = await parseSafeDocument(await excel(async (zip) => {
+      zip.file('xl/workbook.xml', (await zip.file('xl/workbook.xml')!.async('string')).replace('<sheets>', '<bookViews><workbookView activeTab="0" windowWidth="20000" windowHeight="10000"/></bookViews><sheets>'));
+      zip.file('xl/worksheets/sheet1.xml', (await zip.file('xl/worksheets/sheet1.xml')!.async('string')).replace('<sheetData>', '<dimension ref="A1:B1"/><sheetViews><sheetView workbookViewId="0"><selection activeCell="A1" sqref="A1"/></sheetView></sheetViews><sheetData>').replace('</worksheet>', '<mergeCells count="1"><mergeCell ref="A2:B2"/></mergeCells><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>'));
+    }));
+    expect(report.nativeAllowed, JSON.stringify(report.issues)).toBe(true);
+    const output = await unpack(await generateSafeDocument(doc, [edit], report));
+    expect(await output.file('xl/worksheets/sheet1.xml')!.async('string')).toContain('mergeCell');
+  });
+
   it('preserves Excel source bytes across repeated different exports', async () => {
     const { document: doc, report } = await parseSafeDocument(await excel());
     const source = (doc.handle as { zip: JSZip }).zip;

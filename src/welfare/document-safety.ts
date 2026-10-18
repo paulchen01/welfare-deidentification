@@ -15,6 +15,7 @@ const ZIP_ERROR = '文件壓縮結構無效或解壓大小超過安全上限（�
 const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 const X = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main';
 const META = /^docProps\/(core|app|custom)\.xml$/;
+const KNOWN_XML_NAMESPACES = new Set([W, X, 'http://schemas.openxmlformats.org/drawingml/2006/main', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'http://schemas.openxmlformats.org/markup-compatibility/2006', 'http://www.w3.org/XML/1998/namespace', 'http://schemas.openxmlformats.org/package/2006/relationships', 'http://schemas.openxmlformats.org/package/2006/content-types', ...['2009/9/ac', '2009/9/main', '2010/11/main', '2014/revision', '2015/revision2', '2016/revision3', '2015/02/main'].map((name) => `http://schemas.microsoft.com/office/spreadsheetml/${name}`)]);
 type OfficeHandle = { zip: JSZip };
 const reviewedText = new WeakMap<LoadedDocument, string>();
 const SOURCE_CHANGED = '文件來源或已覆核文字已變更，請重新載入並重新核對後輸出';
@@ -66,6 +67,7 @@ function hasUnreviewedPackageData(part: Document, path: string, parts: Map<strin
   const types = new Set(['application/xml', 'application/vnd.openxmlformats-package.relationships+xml', 'application/vnd.openxmlformats-officedocument.theme+xml', ...['document.main', 'styles', 'settings', 'webSettings', 'fontTable', 'numbering', 'header', 'footer'].map((name) => `application/vnd.openxmlformats-officedocument.wordprocessingml.${name}+xml`), ...['sheet.main', 'worksheet', 'sharedStrings', 'styles'].map((name) => `application/vnd.openxmlformats-officedocument.spreadsheetml.${name}+xml`)]);
   for (const el of Array.from(part.getElementsByTagName('*'))) {
     if (!allowedNames.includes(el.localName) || el.textContent?.trim()) return true;
+    if (Array.from(el.attributes).some((attr) => attr.namespaceURI === 'http://www.w3.org/2000/xmlns/' && !KNOWN_XML_NAMESPACES.has(attr.value))) return true;
     const metadata = relationship ? /\/(core-properties|extended-properties|custom-properties)$/.test(el.getAttribute('Type') ?? '') : META.test((el.getAttribute('PartName') ?? '').replace(/^\//, ''));
     if (metadata) continue; // The complete metadata relation/declaration is removed.
     const attrs = el.localName === 'Relationship' ? ['Id', 'Type', 'Target', 'TargetMode'] : el.localName === 'Default' ? ['Extension', 'ContentType'] : el.localName === 'Override' ? ['PartName', 'ContentType'] : [];
@@ -101,14 +103,15 @@ const XLSX_STYLE_ATTRIBUTES: Record<string, string[]> = {
 };
 const XLSX_STYLE_TOKENS = new Set(('true false none solid mediumGray darkGray lightGray darkHorizontal darkVertical darkDown darkUp darkGrid darkTrellis lightHorizontal lightVertical lightDown lightUp lightGrid lightTrellis gray125 gray0625 linear path thin medium dashed dotted thick double hair mediumDashed dashDot mediumDashDot dashDotDot mediumDashDotDot slantDashDot general left center right fill justify centerContinuous distributed top bottom baseline superscript subscript single singleAccounting doubleAccounting major minor').split(' '));
 function neutralXlsxAttribute(el: Element, attr: Attr): boolean {
-  return el.namespaceURI === X && ((el.localName === 'cellStyle' && attr.localName === 'name') || (el.localName === 'name' && el.parentElement?.localName === 'font' && attr.localName === 'val')) || /\/drawingml\/2006\/main$/.test(el.namespaceURI ?? '') && ['name', 'typeface'].includes(attr.localName);
+  return el.namespaceURI === X && ((el.localName === 'cellStyle' && attr.localName === 'name') || (el.localName === 'rFont' && attr.localName === 'val') || (el.localName === 'name' && el.parentElement?.localName === 'font' && attr.localName === 'val')) || /\/drawingml\/2006\/main$/.test(el.namespaceURI ?? '') && ['name', 'typeface'].includes(attr.localName);
 }
 function hasUnreviewedXlsxStyles(part: Document, path: string): boolean {
   if (path !== 'xl/styles.xml') return false;
   for (const el of Array.from(part.getElementsByTagName('*'))) {
     if (el.namespaceURI !== X || !XLSX_STYLE_NODES.has(el.localName) || el.textContent?.trim()) return true;
     for (const attr of Array.from(el.attributes)) {
-      if (attr.namespaceURI === 'http://www.w3.org/2000/xmlns/' || neutralXlsxAttribute(el, attr)) continue;
+      if (attr.namespaceURI === 'http://www.w3.org/2000/xmlns/') { if (!KNOWN_XML_NAMESPACES.has(attr.value)) return true; continue; }
+      if (neutralXlsxAttribute(el, attr)) continue;
       if (!XLSX_STYLE_ATTRIBUTES[el.localName]?.includes(attr.localName)) return true;
       if (['defaultTableStyle', 'defaultPivotStyle'].includes(attr.localName)) {
         if (!/^(?:Table|Pivot)Style(?:Light|Medium|Dark)[1-9]\d?$/.test(attr.value)) return true;
@@ -116,6 +119,69 @@ function hasUnreviewedXlsxStyles(part: Document, path: string): boolean {
       }
       if (attr.localName === 'rgb') { if (!/^[a-f\d]{8}$/i.test(attr.value)) return true; continue; }
       if (!/^-?\d{1,6}(?:\.\d{1,8})?$/.test(attr.value) && !XLSX_STYLE_TOKENS.has(attr.value)) return true;
+    }
+  }
+  return false;
+}
+const XLSX_RICH_SCHEMA: Record<string, string[]> = { r: [], rPr: [], rFont: ['val'], t: [], ...Object.fromEntries(['charset', 'family', 'b', 'i', 'strike', 'outline', 'shadow', 'condense', 'extend', 'color', 'sz', 'u', 'vertAlign', 'scheme'].map((name) => [name, XLSX_STYLE_ATTRIBUTES[name]])) };
+const XLSX_WORKBOOK_SCHEMA: Record<string, string[]> = {
+  workbook: [], fileVersion: ['appName', 'lastEdited', 'lowestEdited', 'rupBuild', 'codeName'],
+  workbookPr: ['date1904', 'dateCompatibility', 'showObjects', 'showBorderUnselectedTables', 'filterPrivacy', 'promptedSolutions', 'showInkAnnotation', 'backupFile', 'saveExternalLinkValues', 'updateLinks', 'codeName', 'hidePivotFieldList', 'showPivotChartFilter', 'allowRefreshQuery', 'defaultThemeVersion'],
+  bookViews: [], workbookView: ['visibility', 'minimized', 'showHorizontalScroll', 'showVerticalScroll', 'showSheetTabs', 'xWindow', 'yWindow', 'windowWidth', 'windowHeight', 'tabRatio', 'firstSheet', 'activeTab', 'autoFilterDateGrouping'],
+  sheets: [], sheet: ['name', 'sheetId', 'state', 'id'],
+  calcPr: ['calcId', 'calcMode', 'fullCalcOnLoad', 'refMode', 'iterate', 'iterateCount', 'iterateDelta', 'fullPrecision', 'calcCompleted', 'calcOnSave', 'concurrentCalc', 'concurrentManualCount', 'forceFullCalc'],
+};
+const XLSX_WORKSHEET_SCHEMA: Record<string, string[]> = {
+  worksheet: [], sheetPr: ['syncHorizontal', 'syncVertical', 'syncRef', 'transitionEvaluation', 'transitionEntry', 'published', 'codeName', 'filterMode', 'enableFormatConditionsCalculation'],
+  tabColor: XLSX_STYLE_ATTRIBUTES.color, outlinePr: ['applyStyles', 'summaryBelow', 'summaryRight', 'showOutlineSymbols'], pageSetUpPr: ['autoPageBreaks', 'fitToPage'],
+  dimension: ['ref'], sheetViews: [], sheetView: ['windowProtection', 'showFormulas', 'showGridLines', 'showRowColHeaders', 'showZeros', 'rightToLeft', 'tabSelected', 'showRuler', 'showOutlineSymbols', 'defaultGridColor', 'showWhiteSpace', 'view', 'topLeftCell', 'colorId', 'zoomScale', 'zoomScaleNormal', 'zoomScaleSheetLayoutView', 'zoomScalePageLayoutView', 'workbookViewId'],
+  pane: ['xSplit', 'ySplit', 'topLeftCell', 'activePane', 'state'], selection: ['pane', 'activeCell', 'activeCellId', 'sqref'],
+  sheetFormatPr: ['baseColWidth', 'defaultColWidth', 'defaultRowHeight', 'customHeight', 'zeroHeight', 'thickTop', 'thickBottom', 'outlineLevelRow', 'outlineLevelCol', 'dyDescent'],
+  cols: [], col: ['min', 'max', 'width', 'style', 'hidden', 'bestFit', 'customWidth', 'phonetic', 'outlineLevel', 'collapsed'],
+  sheetData: [], row: ['r', 'spans', 's', 'customFormat', 'ht', 'hidden', 'customHeight', 'outlineLevel', 'collapsed', 'thickTop', 'thickBot', 'ph', 'dyDescent'],
+  c: ['r', 's', 't'], v: [], is: [], ...XLSX_RICH_SCHEMA,
+  sheetCalcPr: ['fullCalcOnLoad'], mergeCells: ['count'], mergeCell: ['ref'],
+  printOptions: ['horizontalCentered', 'verticalCentered', 'headings', 'gridLines', 'gridLinesSet'], pageMargins: ['left', 'right', 'top', 'bottom', 'header', 'footer'],
+  pageSetup: ['paperSize', 'scale', 'firstPageNumber', 'fitToWidth', 'fitToHeight', 'pageOrder', 'orientation', 'usePrinterDefaults', 'blackAndWhite', 'draft', 'cellComments', 'useFirstPageNumber', 'errors', 'horizontalDpi', 'verticalDpi', 'copies', 'id'],
+  rowBreaks: ['count', 'manualBreakCount'], colBreaks: ['count', 'manualBreakCount'], brk: ['id', 'min', 'max', 'man', 'pt'], ignoredErrors: [],
+  ignoredError: ['sqref', 'evalError', 'twoDigitTextYear', 'numberStoredAsText', 'formula', 'formulaRange', 'unlockedFormula', 'emptyCellReference', 'listDataValidation', 'calculatedColumn'],
+};
+const XLSX_DRAWING_NODES = new Set(('theme themeElements clrScheme dk1 lt1 dk2 lt2 accent1 accent2 accent3 accent4 accent5 accent6 hlink folHlink sysClr srgbClr fontScheme majorFont minorFont latin ea cs font fmtScheme fillStyleLst solidFill schemeClr tint shade satMod gradFill gsLst gs lin path fillToRect tileRect lnStyleLst ln prstDash miter headEnd tailEnd effectStyleLst effectStyle effectLst outerShdw scene3d camera lightRig rot sp3d bevelT bevelB bgFillStyleLst objectDefaults extraClrSchemeLst noFill').split(' '));
+const XLSX_DRAWING_ATTRIBUTES = new Set(('val name typeface script pitchFamily charset rotWithShape pos ang scaled path l t r b w cap cmpd algn lim type width len blurRad dist dir sx sy kx ky grow prst fov zoom lat lon rev rig z h material').split(' '));
+const XLSX_METADATA_TOKENS = new Set(('visible hidden veryHidden all placeholders none userSet never always auto autoNoTable manual A1 R1C1 normal pageBreakPreview pageLayout topLeft topRight bottomLeft bottomRight split frozen frozenSplit s inlineStr n b e str d downThenOver overThenDown default portrait landscape atEnd asDisplayed displayed blank dash NA window windowText phClr lt1 dk1 lt2 dk2 accent1 accent2 accent3 accent4 accent5 accent6 hlink folHlink solid ctr sng flat round square miter med sm lg dash dashDot dot rect circle noDash perspective relaxedInset above below orthographicFront threePt balanced soft legacyFlat1 warm cool neutral metal plastic softEdge matte').split(' '));
+const XLSX_SCRIPT_CODES = new Set('Latn Grek Cyrl Jpan Hang Hans Hant Arab Hebr Thai Deva Taml Syrc Beng Gujr Knda Guru Cans Cher Yiii Tibt Thaa Mong Nkoo Vaii Laoo Khmr Mymr Sinh Ethi Geor Armn'.split(' '));
+function hasUnreviewedXlsxData(part: Document, path: string): boolean {
+  if (path === 'xl/styles.xml') return part.documentElement.localName !== 'styleSheet';
+  if (!path.startsWith('xl/') || path.endsWith('.rels')) return false;
+  const theme = /^xl\/theme\/theme\d+\.xml$/.test(path);
+  const root = path === 'xl/workbook.xml' ? 'workbook' : path === 'xl/sharedStrings.xml' ? 'sst' : theme ? 'theme' : 'worksheet';
+  const schema = root === 'workbook' ? XLSX_WORKBOOK_SCHEMA : root === 'sst' ? { sst: ['count', 'uniqueCount'], si: [], ...XLSX_RICH_SCHEMA } : XLSX_WORKSHEET_SCHEMA;
+  if (part.documentElement.localName !== root) return true;
+  for (const el of Array.from(part.getElementsByTagName('*'))) {
+    if (theme ? el.namespaceURI !== 'http://schemas.openxmlformats.org/drawingml/2006/main' || !XLSX_DRAWING_NODES.has(el.localName) : el.namespaceURI !== X || !Object.hasOwn(schema, el.localName)) return true;
+    const parent = el.parentElement?.localName;
+    const parents: Record<string, string[]> = { si: ['sst'], sheetData: ['worksheet'], row: ['sheetData'], c: ['row'], v: ['c'], is: ['c'], r: ['si', 'is'], rPr: ['r'], t: ['si', 'is', 'r'], rFont: ['rPr'] };
+    if (!theme && parents[el.localName] && !parents[el.localName].includes(parent ?? '')) return true;
+    if (Array.from(el.childNodes).some((node) => (node.nodeType === Node.TEXT_NODE || node.nodeType === Node.CDATA_SECTION_NODE) && !!node.textContent?.trim() && !(!theme && ['t', 'v'].includes(el.localName)))) return true;
+    if (el.localName === 'c') {
+      const children = Array.from(el.children).map((child) => child.localName);
+      const permitted = el.getAttribute('t') === 'inlineStr' ? ['is'] : ['v'];
+      if (children.some((child) => !permitted.includes(child)) || children.length > 1) return true;
+    }
+    for (const attr of Array.from(el.attributes)) {
+      if (attr.namespaceURI === 'http://www.w3.org/2000/xmlns/') { if (!KNOWN_XML_NAMESPACES.has(attr.value)) return true; continue; }
+      if (authorAttribute(attr) || neutralXlsxAttribute(el, attr)) continue;
+      if (attr.namespaceURI === 'http://www.w3.org/XML/1998/namespace' && el.localName === 't' && attr.localName === 'space' && ['preserve', 'default'].includes(attr.value)) continue;
+      if (attr.namespaceURI === 'http://schemas.openxmlformats.org/markup-compatibility/2006' && attr.localName === 'Ignorable') continue;
+      if (theme ? !XLSX_DRAWING_ATTRIBUTES.has(attr.localName) : !schema[el.localName]?.includes(attr.localName)) return true;
+      if (!theme && ((el.localName === 'sheet' && attr.localName === 'name') || (['workbookPr', 'sheetPr', 'fileVersion'].includes(el.localName) && attr.localName === 'codeName') || (el.localName === 'fileVersion' && attr.localName === 'appName'))) continue;
+      if (attr.localName === 'id' && el.localName !== 'brk') { if (!/^rId\d{1,6}$/.test(attr.value)) return true; continue; }
+      if (['ref', 'sqref', 'activeCell', 'topLeftCell', 'syncRef'].includes(attr.localName) || el.localName === 'c' && attr.localName === 'r') { if (!/^[A-Z]{1,3}[1-9]\d{0,6}(?::[A-Z]{1,3}[1-9]\d{0,6})?(?: [A-Z]{1,3}[1-9]\d{0,6}(?::[A-Z]{1,3}[1-9]\d{0,6})?)*$/.test(attr.value)) return true; continue; }
+      if (attr.localName === 'spans') { if (!/^\d{1,6}:\d{1,6}$/.test(attr.value)) return true; continue; }
+      if (attr.localName === 'rgb') { if (!/^[a-f\d]{8}$/i.test(attr.value)) return true; continue; }
+      if (theme && attr.localName === 'script') { if (!XLSX_SCRIPT_CODES.has(attr.value)) return true; continue; }
+      if (theme && attr.localName === 'val' && /^[a-f\d]{6}$/i.test(attr.value)) continue;
+      if (!/^-?\d{1,8}(?:\.\d{1,10})?$/.test(attr.value) && !XLSX_METADATA_TOKENS.has(attr.value) && !XLSX_STYLE_TOKENS.has(attr.value)) return true;
     }
   }
   return false;
@@ -241,6 +307,7 @@ async function inspectOffice(doc: LoadedDocument): Promise<FormatSafetyReport> {
       if (Array.from(part.getElementsByTagNameNS(W, 'lvlText')).some((el) => !SAFE_NUMBERING_TEXT.test(el.getAttributeNS(W, 'val') ?? ''))) add('uncovered-numbering', 'Word 編號含自訂文字，未納入文字偵測');
       if (!/^word\/(document|header\d*|footer\d*)\.xml$/.test(path) && part.getElementsByTagNameNS(W, 't').length) add('uncovered-word-text', 'Word 的非正文項目含文字，未完整納入預覽');
     } else {
+      if (hasUnreviewedXlsxData(part, path)) add('unreviewed-excel-fields', 'Excel 活頁簿或工作表含未納入預覽的檢視、文字屬性或未知 XML 結構，已阻擋原格式輸出');
       if (hasUnreviewedXlsxStyles(part, path)) add('unreviewed-excel-styles', 'Excel 樣式含自訂表格樣式或未知文字屬性，未納入預覽，已阻擋原格式輸出');
       if (/^xl\/(workbook|sharedStrings|styles|worksheets\/sheet\d+)\.xml$/.test(path) && part.documentElement.namespaceURI !== X) add('unsupported-schema', '試算表使用不支援的 XML 格式，無法完整擷取');
       if (elements(part, ['f', 'definedName', 'externalReference', 'calcChain', 'pivotTable', 'tablePart'])) add('formula-reference', 'Excel 含公式、名稱或資料參照；公式及快取值未完整納入偵測，已阻擋原格式輸出');
@@ -342,7 +409,7 @@ async function sanitizeOffice(zip: JSZip, format: 'docx' | 'xlsx'): Promise<void
       for (const attr of Array.from(el.attributes)) {
         if (authorAttribute(attr)) { el.removeAttributeNode(attr); continue; }
         if (format === 'docx' && neutralWordAttribute(el, attr)) attr.value = el.localName === 'style' || STYLE_REFS.has(el.localName) ? safeStyle(attr.value) : ['font', 'rFonts', 'altName', 'latin', 'ea', 'cs'].includes(el.localName) || attr.localName === 'typeface' ? 'Noto Sans TC' : `中性樣式${++labelId}`;
-        if (format === 'xlsx' && neutralXlsxAttribute(el, attr)) attr.value = el.localName === 'name' || attr.localName === 'typeface' ? 'Noto Sans TC' : `中性樣式${++labelId}`;
+        if (format === 'xlsx' && neutralXlsxAttribute(el, attr)) attr.value = ['name', 'rFont'].includes(el.localName) || attr.localName === 'typeface' ? 'Noto Sans TC' : `中性樣式${++labelId}`;
         if (format === 'xlsx' && attr.localName === 'codeName' && ['workbookPr', 'sheetPr', 'fileVersion'].includes(el.localName)) el.removeAttributeNode(attr);
         if (format === 'xlsx' && el.localName === 'fileVersion' && attr.localName === 'appName') attr.value = 'xl';
       }

@@ -97,3 +97,11 @@ RED 證據：首次 review regression run **47 tests 中 10 failed、37 passed**
 - numFmt／formatCode 仍全面阻擋；沒有刪除未知顯示格式後宣稱成功。info 明示樣式／字型／主題識別名稱會清理、字型與版面可能改變。所有 report／錯誤仍不顯示來源欄位值。
 
 最終相關回歸命令沿用上述 7-file 命令，**7 files、101 tests 通過**（安全測試 **62** 項），exit 0，3.00 秒（2026-10-18 19:21:28）。`node node_modules/typescript/bin/tsc --noEmit` exit 0。未修改 OCR 檔與原有 OCR 警告處理，也未修改 UI／session 或父代理負責的重複 person ID 功能。
+
+## 最終再覆核：XLSX 以封閉結構檢查取代額外 blocklist
+
+再覆核確認 `customWorkbookViews/customWorkbookView/@name` 仍可能留存未預覽名稱。新增 exact probe，連同未知 workbook root 屬性、worksheet 屬性／結構、shared-string 結構與 theme 屬性，RED 為 **6 failed**。另驗出任意 namespace 宣告也可存入未預覽文字，新增三個 RED；一般 workbook views／worksheet layout 的正向測試已通過。
+
+本次改為所有允許的 XLSX XML parts 都有封閉檢查：workbook、worksheet、shared strings、styles、theme、package manifest／relationships 各用明確節點與逐節點屬性集合；未知節點、未知屬性、未知 namespace、未認可格式值直接阻擋。只有已知 sheet/style/font/theme/codeName/appName 欄位可依前述規則中性化；沒有替未知結構新增支援。`customWorkbookViews`／`customSheetViews` 均不在支援集合內。`t`／`v` 文字節點還須出現在已知儲存格／共用字串結構中，避免同名節點放在未預覽區域。已支援的普通 workbook view、儲存格、rich/inline text、合併範圍及頁面邊界維持可輸出；更複雜或未知擴充依核對文字 fallback 處理。
+
+最終相關 7-file 回歸 **111/111 tests 通過**（安全 **72** 項），exit 0，2.80 秒，2026-10-18 19:27:40。TypeScript `tsc --noEmit` exit 0。只修改 document-safety 模組、其測試與本報告，未修改 UI、session 或封裝程式。
