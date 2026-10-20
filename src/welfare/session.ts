@@ -28,7 +28,12 @@ export class WorkspaceSession {
     if (document.text.length > 2_000_000) throw new Error('抽取文字超過 200 萬字元，請分割文件後處理');
     if (!document.text.trim()) throw new Error('未取得可檢視文字，請確認檔案內容或辨識結果');
     const id = crypto.randomUUID();
+    const session=this;
     const item:WorkspaceDocument = {id, document, report, groupId:id, kind:this.kind, findings:[], reviewConfirmed:false, mode:'text'};
+    // Live configuration is not document data and must not enter review rollback snapshots.
+    Object.defineProperty(item,'detectionConfig',{get:()=>({
+      purpose:session.purpose,groupId:item.groupId,people:session.people.filter(p=>p.name.trim()),customRules:session.profile.rules,
+    })});
     this.people.push(...proposePeople(document.text, id).map(person=>({...person,id:crypto.randomUUID()})));
     this.documents.push(item); this.activeId = id;
     this.reanalyse(item);

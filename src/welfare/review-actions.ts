@@ -1,6 +1,7 @@
 import { createManualFinding,findingsToEdits } from './engine';
 import type { WorkspaceDocument } from './session';
 import type { FindingAction,WelfareFinding } from './types';
+import { revokeOutputApproval } from './output-scan';
 
 export interface ReviewState { filter:'all'|'pending'; page:number; selectedId?:string }
 export interface ReviewHistoryEntry { findings:WelfareFinding[]; affectedIds:string[] }
@@ -11,7 +12,7 @@ export interface SameWordPreview {
 }
 export const REVIEW_PAGE_SIZE=30;
 export function reviewState(doc:WorkspaceDocument):ReviewState {return doc.reviewState??=( {filter:'all',page:0} );}
-export function touchReview(doc:WorkspaceDocument):void {doc.reviewRevision=(doc.reviewRevision??0)+1;}
+export function touchReview(doc:WorkspaceDocument):void {doc.reviewRevision=(doc.reviewRevision??0)+1;revokeOutputApproval(doc);}
 export function resetReview(doc:WorkspaceDocument):void {delete doc.reviewHistory;delete doc.reviewState;doc.reviewConfirmed=false;touchReview(doc);}
 
 function commit(doc:WorkspaceDocument,next:WelfareFinding[],affectedIds:string[]):void {

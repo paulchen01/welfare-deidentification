@@ -32,4 +32,17 @@ describe('share output is independent from recovery data', () => {
     const doc = entry(); doc.document.text += '，王小明';
     await expect(createShareDocument(doc, 1)).rejects.toThrow(/殘留/);
   });
+  it('blocks newly inserted phone numbers in generalized text before export', async () => {
+    const doc = entry();
+    doc.findings[0].action = 'generalize';
+    doc.findings[0].generalized = '聯絡電話：0987654321';
+    await expect(createShareDocument(doc, 1)).rejects.toThrow(/新增疑似/);
+    await expect(buildShareArchive([doc], 'ai')).rejects.toThrow(/新增疑似/);
+  });
+  it('does not release an archive if review is revoked while it is generating', async () => {
+    const doc = entry();
+    const pending = buildShareArchive([doc], 'ai');
+    doc.reviewConfirmed = false;
+    await expect(pending).rejects.toThrow(/變動|覆核/);
+  });
 });
