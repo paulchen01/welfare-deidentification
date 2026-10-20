@@ -5,6 +5,8 @@ import { createShareDocument,buildShareArchive,copyShareText } from '../../src/w
 import { WorkspaceSession } from '../../src/welfare/session';
 import { changeFinding,undoReview,confirmFullReview,setReviewed } from '../../src/welfare/review-actions';
 import { importBulkPeople,previewBulkPeople } from '../../src/welfare/bulk-people';
+import { buildXlsx,toXlsxFile } from '../helpers/xlsx-builder';
+import { parseSafeDocument } from '../../src/welfare/document-safety';
 
 function document(text='短詞；0987654321；說明') {
   const session=new WorkspaceSession();
@@ -19,6 +21,29 @@ function document(text='短詞；0987654321；說明') {
 }
 afterEach(()=>vi.restoreAllMocks());
 describe('second scan of exact output',()=>{
+  it('keeps marker boundaries when rescanning an actual Excel row with adjacent labeled cells',async()=>{
+    const parsed=await parseSafeDocument(toXlsxFile(await buildXlsx({
+      sheets:[{name:'王小明名冊',rows:[['案主：王小明','電話：0912345678']]}],
+    }),'名冊.xlsx'));
+    const session=new WorkspaceSession(),doc=session.add(parsed.document,parsed.report);
+    doc.findings.forEach(f=>{f.reviewed=true;});doc.reviewConfirmed=true;doc.mode='native';
+    const scan=inspectOutput(doc);
+    expect(scan.text).toBe('案主：[姓名]\t電話：[手機]\n\n');
+    expect(scan.risks).toEqual([]);
+    const output=await createShareDocument(doc,1);
+    const reread=await parseSafeDocument(new File([output.blob],output.name));
+    expect(reread.document.text).toContain('案主：[姓名]');
+    expect(reread.document.text).not.toContain('王小明');
+    expect(reread.document.text).not.toContain('0912345678');
+    const zip=await JSZip.loadAsync(await output.blob.arrayBuffer());
+    expect(await zip.file('xl/workbook.xml')!.async('string')).toContain('中性工作表1');
+  });
+  it.each(['\t',' '])('does not mistake an adjacent field label for a name across a stock marker (%j)',separator=>{
+    const session=new WorkspaceSession();
+    const doc=session.add({fileName:'fixture.txt',format:'txt',text:`案主：王小明${separator}電話：0912345678`,handle:null},{nativeAllowed:true,issues:[]});
+    doc.findings.forEach(f=>{f.reviewed=true;});doc.reviewConfirmed=true;
+    expect(inspectOutput(doc).risks).toEqual([]);
+  });
   it('maps reviewed keep ranges after variable-length edits without whitelisting equal values elsewhere',()=>{
     const {doc}=document();const scan=inspectOutput(doc);
     expect(scan.confirmedKeeps).toHaveLength(1);

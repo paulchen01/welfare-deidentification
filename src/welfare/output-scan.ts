@@ -36,32 +36,27 @@ export function inspectOutput(entry:ShareEntry):OutputScan {
   if(approvals.has(entry)&&approvals.get(entry)!==signature)revokeOutputApproval(entry);
   const edits=findingsToEdits(entry.document.text,entry.findings);
   const editsByStart=new Map(edits.map(edit=>[edit.start,edit]));
-  const findingsByStart=new Map(entry.findings.map(finding=>[finding.start,finding]));
   const text=applyEdits(entry.document.text,edits);
   const confirmedKeeps:OutputSpan[]=[];
+  const stockMarkers:OutputSpan[]=[];
   let delta=0;
   for(const finding of [...entry.findings].sort((a,b)=>a.start-b.start)){
     if(finding.action==='keep'){
       if(finding.reviewed)confirmedKeeps.push({start:finding.start+delta,end:finding.end+delta});
     }else{
       const edit=editsByStart.get(finding.start)!;
+      if(finding.action==='mask'&&isStockMarker(edit.replacement))
+        stockMarkers.push({start:finding.start+delta,end:finding.start+delta+edit.replacement.length});
       delta+=edit.replacement.length-(edit.end-edit.start);
     }
   }
-  // Only our finite stock placeholders are inert. Custom category labels are
-  // still scanned (including identifiers inside brackets), at the same offsets.
-  let scanText='',cursor=0;
-  for(const edit of edits){
-    scanText+=entry.document.text.slice(cursor,edit.start);
-    const finding=findingsByStart.get(edit.start)!;
-    scanText+=finding.action==='mask'&&isStockMarker(edit.replacement)?' '.repeat(edit.replacement.length):edit.replacement;
-    cursor=edit.end;
-  }
-  scanText+=entry.document.text.slice(cursor);
+  // Scan the actual output, preserving marker boundaries between labeled fields.
+  // Only hits wholly inside our finite stock placeholders are inert; custom
+  // category labels (including identifiers inside brackets) remain candidates.
   const config=entry.detectionConfig??{purpose:'ai' as const,groupId:entry.id,people:[]};
-  const risks=detectWelfare(scanText,config).filter(f=>f.original.trim()&&
-    !confirmedKeeps.some(keep=>keep.start<=f.start&&keep.end>=f.end))
-    .map(f=>({...f,original:text.slice(f.start,f.end)}));
+  const risks=detectWelfare(text,config).filter(f=>f.original.trim()&&
+    !confirmedKeeps.some(keep=>keep.start<=f.start&&keep.end>=f.end)&&
+    !stockMarkers.some(marker=>marker.start<=f.start&&marker.end>=f.end));
   const hidden=entry.findings.filter(f=>f.action!=='keep').map(f=>f.original).filter(s=>s.length>=2);
   return {text,edits,signature,confirmedKeeps,risks,knownOriginalsRemain:hidden.some(value=>text.includes(value)),
     reviewComplete:entry.reviewConfirmed&&entry.findings.every(f=>f.reviewed)};
