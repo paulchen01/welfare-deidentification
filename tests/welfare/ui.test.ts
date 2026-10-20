@@ -3,6 +3,30 @@ import { mountWelfareApp } from '../../src/welfare/app';
 describe('welfare workflow interface', () => {
   beforeEach(()=>{vi.spyOn(window,'scrollTo').mockImplementation(()=>{});});
   afterEach(()=>{vi.restoreAllMocks();window.getSelection()?.removeAllRanges();});
+  it('downloads a reviewed single file while another file remains unreviewed',async()=>{
+    const exporting=await import('../../src/welfare/export');const download=vi.spyOn(exporting,'downloadBlob').mockImplementation(()=>{});
+    const host=document.createElement('div');const app=mountWelfareApp(host);
+    app.addText('電話0912345678');const first=app.session.active!;
+    app.addText('另一份未覆核文件');app.go('export');
+    const buttons=()=>[...host.querySelectorAll<HTMLButtonElement>('button')].filter(b=>b.textContent==='下載這份文件');
+    expect(buttons()[0]?.disabled).toBe(true);
+    first.findings.forEach(f=>{f.reviewed=true;});first.reviewConfirmed=true;app.render();
+    expect(buttons()[0]?.disabled).toBe(false);expect(buttons()[1]?.disabled).toBe(true);
+    buttons()[0]!.click();await vi.waitFor(()=>expect(app.busy).toBe(false));
+    expect(download).toHaveBeenCalledOnce();expect(download.mock.calls[0][1]).toBe('文件-001.txt');
+    expect(await download.mock.calls[0][0].text()).not.toContain('0912345678');
+  });
+  it('does not download an in-flight single export after clearing the workspace',async()=>{
+    const exporting=await import('../../src/welfare/export');const download=vi.spyOn(exporting,'downloadBlob').mockImplementation(()=>{});
+    let finish!:()=>void;const pending=new Promise<void>(resolve=>{finish=resolve;});
+    const original=exporting.createShareDocument;
+    vi.spyOn(exporting,'createShareDocument').mockImplementation(async(...args)=>{await pending;return original(...args);});
+    const host=document.createElement('div');const app=mountWelfareApp(host);app.addText('普通文字');
+    app.session.active!.reviewConfirmed=true;app.go('export');
+    [...host.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent==='下載這份文件')!.click();
+    app.clear();finish();await pending;await new Promise(resolve=>setTimeout(resolve,10));
+    expect(download).not.toHaveBeenCalled();expect(app.session.documents).toHaveLength(0);
+  });
   it('does not revive a later cancelled import when an older import resolves',async()=>{
     const parser=await import('../../src/welfare/document-safety');const parsed=vi.spyOn(parser,'parseSafeDocument');
     let resolveA!:(text:string)=>void;let resolveB!:(text:string)=>void;

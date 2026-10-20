@@ -88,7 +88,7 @@ function ocrAssets(): Plugin {
 }
 
 export default defineConfig({
-  base: './',
+  base: process.env.VITE_BASE_PATH || './',
   plugins: [buildDate(), llmsFull(), ocrAssets()],
   build: {
     target: 'es2022',

@@ -11,4 +11,10 @@ describe('independent welfare entry point', () => {
     for (const el of page.querySelectorAll('script[src],link[rel=stylesheet]')) expect(el.getAttribute('src') ?? el.getAttribute('href')).not.toMatch(/^https?:/);
     expect(page.querySelector('html')?.getAttribute('lang')).toBe('zh-Hant');
   });
+  it('restricts scripts and case-data connections on static hosts',()=>{
+    const csp=page.querySelector('meta[http-equiv="Content-Security-Policy"]')?.getAttribute('content');
+    expect(csp).toContain("connect-src 'self' blob:");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).not.toContain("script-src 'self' 'unsafe-inline'");
+  });
 });

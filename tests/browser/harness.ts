@@ -79,6 +79,18 @@ run.onclick=async()=>{
     const entry=reviewed(parsed);assert(entry.report.nativeAllowed,'合成可讀 PDF 未允許重建');const output=await createShareDocument(entry,1);const reread=await parsePdf(new File([output.blob],output.name));
     assert(reread.layout?.kind==='pdf'&&reread.layout.pages.length===2,'PDF 回讀頁數不符');assert(!reread.text.includes('0912345678')&&!reread.text.includes('0987654321'),'PDF 直接識別殘留');return `2 頁均有文字；${entry.findings.length} 處規則辨識，輸出可重新讀取`;
   });
+  for(const ext of ['docx','pdf'])await test(`試用頁 ${ext.toUpperCase()} 範例輸出與回讀`,async()=>{
+    const response=await fetch(`${import.meta.env.BASE_URL}trial-assets/fictional-case.${ext}`);
+    assert(response.ok,'試用範例無法下載');
+    const parsed=await parseSafeDocument(new File([await response.arrayBuffer()],`fictional-case.${ext}`));
+    assert(parsed.document.text.includes('王小明')&&parsed.document.text.includes('陳美惠'),'範例抽取缺少人物');
+    assert(parsed.report.nativeAllowed,'試用範例不能原格式輸出');
+    const output=await createShareDocument(reviewed(parsed),1);
+    const reread=await parseSafeDocument(new File([output.blob],output.name));
+    for(const value of ['王小明','陳美惠','0912-345-678'])assert(!reread.document.text.includes(value),'試用輸出仍有原值');
+    assert(reread.document.text.includes('家庭支持'),'服務敘事遺失');
+    return `${output.name}：姓名與電話已處理，服務敘事仍在`;
+  });
   await test('機構範本拒絕個案名單與儲存變動檢查',async()=>{
     assert(parseProfile(serializeProfile(DEFAULT_PROFILE)).version===1,'範本無法回讀');let rejected=false;try{parseProfile(JSON.stringify({...DEFAULT_PROFILE,people:[{name:'王小明'}]}));}catch{rejected=true;}assert(rejected,'範本接受個案名單');assert(rawStorage()===storageBefore,'localStorage/sessionStorage 被變動');return '個案欄位拒絕；Web Storage 未變動';
   });

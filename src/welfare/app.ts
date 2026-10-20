@@ -48,7 +48,8 @@ export function mountWelfareApp(host:HTMLElement):UIContext {
       const views:[WorkspaceView,string,string][]=[['input','01','加入資料'],['people','02','人物與規則'],['review','03','人工覆核'],['export','04','匯出文件']];
       for(const [id,num,label]of views){const b=button('',()=>ctx.go(id),`nav-item ${ctx.view===id?'active':''}`);b.append(node('span','nav-number',num),node('span','',label));b.disabled=ctx.busy;if(id===ctx.view)b.setAttribute('aria-current','step');nav.append(b);}
       const secondary=node('div','secondary-nav');secondary.append(button('還原文字',()=>ctx.go('restore'),`nav-item ${ctx.view==='restore'?'active':''}`),button('機構範本',()=>ctx.go('settings'),`nav-item ${ctx.view==='settings'?'active':''}`));
-      const note=node('div','sidebar-note');note.append(pill('本機處理','success'),node('p','','不登入、不上傳。'),node('small','','資料只保留於本頁記憶體；重新整理或關閉頁面會失去本次工作。'));
+      const trial=node('a','nav-item','社工試用說明 ↗');trial.href=`${import.meta.env.BASE_URL}trial.html`;trial.target='_blank';trial.rel='noopener noreferrer';secondary.append(trial);
+      const note=node('div','sidebar-note');note.append(pill('本機處理','success'),node('p','','免登入，個案檔案不上傳。'),node('small','','資料只保留於本頁記憶體；重新整理或關閉頁面會失去本次工作。'));
       sidebar.append(brand,nav,secondary,note);
       const main=node('main','main');const top=node('header','topbar');
       top.append(node('span','workspace-label','個案資料工作台'),pill(PURPOSES.find(p=>p.id===session.purpose)?.label??''),node('span','document-count',`${session.documents.length} 份文件`),button('結束並清除',()=>ctx.clear(),'button text-button'));

@@ -5,3 +5,4 @@ dist
 artifacts/
 .superpowers/
 docs/*-review.diff
+.openai/

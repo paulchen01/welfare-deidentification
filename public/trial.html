@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>社工試用｜社福去識別化工作台</title>
+  <link rel="stylesheet" href="./trial.css">
+  <script src="./trial.js" defer></script>
+</head>
+<body>
+<header><a href="./">守 · 社福去識別化</a><a href="https://github.com/paulchen01/welfare-deidentification" target="_blank" rel="noopener noreferrer">GitHub 專案 ↗</a></header>
+<main>
+  <section class="hero">
+    <p class="eyebrow">SOCIAL WORK · PILOT</p>
+    <h1>用一份虛構紀錄，<br>試走分享前的四個步驟。</h1>
+    <p class="lead">預留 10–15 分鐘。這次想了解：操作是否清楚、哪些內容漏抓或誤抓，以及下載的文件是否能用。</p>
+    <a class="button" href="./" target="_blank" rel="noopener">開啟工作台 ↗</a>
+    <p class="small">試用版 · 先使用下方虛構資料，不需要註冊帳號。</p>
+  </section>
+  <section class="notice"><strong>資料如何處理？</strong><p>選取的文件由你的瀏覽器在本機處理，不會上傳到 GitHub。開啟網站仍會向 GitHub Pages 下載程式、字型與 OCR 資源。關閉或重新整理工作台會失去本次工作；請先下載結果。</p></section>
+  <section aria-labelledby="tasks-title">
+    <h2 id="tasks-title">三個試用任務</h2>
+    <div class="steps">
+      <article><span class="number">01</span><h3>上傳 Word 或 PDF</h3><p>下載一份虛構資料，開啟工作台並選擇「外部 AI」，加入文件。兩份範例內容相同，可分別測試。</p><div class="links"><a download href="./trial-assets/fictional-case.docx">下載 Word 範例</a><a download href="./trial-assets/fictional-case.pdf">下載 PDF 範例</a></div></article>
+      <article><span class="number">02</span><h3>確認人物、人工覆核</h3><p>確認王小明與陳美惠的角色。核對姓名、重複出現的人名與電話；試試手動標記一段文字，再核對全部項目與處理後全文。</p></article>
+      <article><span class="number">03</span><h3>下載、開啟、檢查</h3><p>在「匯出文件」選擇 DOCX 或 PDF，按「下載這份文件」。開啟檔案，檢查姓名與電話是否已處理、內容是否仍能理解，再下載 TXT 比較。</p></article>
+    </div>
+    <p class="small">DOCX 原格式輸出僅限結構檢查通過的文件；有批註、修訂、圖片或其他未涵蓋內容時，會限制為已抽取文字。PDF 重新產生文字版，不保留圖片；OCR 可能漏字或誤字。工具不保證完全匿名。</p>
+  </section>
+  <section class="feedback" aria-labelledby="feedback-title">
+    <p class="eyebrow">YOUR EXPERIENCE</p><h2 id="feedback-title">留下操作感受</h2>
+    <p>填寫後只會下載到你的電腦，不會自動送出。請將回饋檔交給邀請你試用的人。請勿填寫真實個案姓名、電話、機構內部資訊，或貼上原文。</p>
+    <form id="feedback-form">
+      <div class="grid">
+        <label>職務（選填）<input name="role" maxlength="60" placeholder="例如：社工、督導、研究人員"></label>
+        <label>瀏覽器與裝置<input name="device" required maxlength="120" placeholder="例如：Windows／Chrome"></label>
+        <label>測試格式<select name="format"><option>Word（DOCX）</option><option>PDF</option><option>兩者皆有</option><option>純文字</option></select></label>
+        <label>大約花費時間<select name="time"><option>少於 10 分鐘</option><option>10–15 分鐘</option><option>16–30 分鐘</option><option>超過 30 分鐘</option></select></label>
+      </div>
+      <label>是否完成上傳、覆核、下載並開啟檔案？<select name="completed"><option>全部完成</option><option>上傳時卡住</option><option>人物或覆核時卡住</option><option>無法下載或開啟</option></select></label>
+      <label>有沒有漏抓、誤抓或難懂的操作？<textarea name="observations" rows="4" maxlength="2500" placeholder="請描述類型與步驟；範例只使用虛構資料。"></textarea></label>
+      <label>在你的工作中，最需要改善的是什麼？<textarea name="improvements" rows="3" maxlength="2000"></textarea></label>
+      <label class="check"><input name="safe" type="checkbox" required>我確認回饋未包含真實個案資料。</label>
+      <button class="button" type="submit">下載回饋文字檔</button><p id="status" role="status" aria-live="polite"></p>
+    </form>
+    <p class="small">也可到 <a href="https://github.com/paulchen01/welfare-deidentification/issues/new?template=trial-feedback.yml" target="_blank" rel="noopener noreferrer">GitHub 留下公開回饋</a>（需 GitHub 帳號）。公開 issue 請只附虛構範例。</p>
+  </section>
+</main>
+<footer>社福去識別化工作台 · 輔助辨識、人工決定。<br>尚未以真實個案驗證辨識正確率。</footer>
+</body></html>

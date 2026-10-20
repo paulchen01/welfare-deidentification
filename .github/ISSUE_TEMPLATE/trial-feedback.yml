@@ -1,0 +1,32 @@
+name: 社工試用回饋
+description: 回報操作問題、漏抓或誤抓類型（只能使用虛構資料）
+title: "[試用回饋] "
+body:
+  - type: markdown
+    attributes:
+      value: "這是公開 issue。請勿提供真實個案資料、原始文件、含個資的畫面或還原對照檔。可使用試用頁的虛構範例。"
+  - type: checkboxes
+    attributes:
+      label: 資料確認
+      options:
+        - label: 我確認本回饋與附件沒有真實個案或機構內部資料。
+          required: true
+  - type: input
+    attributes:
+      label: 瀏覽器與裝置
+      placeholder: Windows 11／Chrome
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: 文件格式
+      options: [DOCX, PDF, XLSX, TXT, 其他]
+  - type: textarea
+    attributes:
+      label: 操作步驟與遇到的問題
+      description: 請描述預期結果、實際結果與如何重現。範例只使用虛構內容。
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 改善建議

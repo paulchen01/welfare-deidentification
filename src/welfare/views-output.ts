@@ -13,9 +13,15 @@ export function exportView(ctx:UIContext):HTMLElement {
     const row=node('div','export-row');const complete=doc.reviewConfirmed&&doc.findings.every(f=>f.reviewed);
     const info=node('div');info.append(node('h3','',`文件 ${i+1}`),pill(complete?'已覆核':'待覆核',complete?'success':'warning'),node('p','muted',`${doc.findings.filter(f=>f.action!=='keep').length} 處處理 · ${doc.findings.filter(f=>f.action==='keep').length} 處保留`));
     const options=[{value:'text',label:'純文字 TXT（建議）'}];
-    if(doc.report.nativeAllowed&&doc.document.format!=='txt')options.push({value:'native',label:`${doc.document.format.toUpperCase()} 原格式`});
+    const nativeLabel=doc.document.format==='pdf'?'PDF（重新生成文字版）':doc.document.format==='docx'?'DOCX（處理後 Word）':'XLSX（處理後活頁簿）';
+    if(doc.report.nativeAllowed&&doc.document.format!=='txt')options.push({value:'native',label:nativeLabel});
     const mode=select(options,doc.mode);mode.onchange=()=>{doc.mode=mode.value as 'native'|'text';};
-    row.append(info,field('輸出格式',mode),button('檢查這份文件',()=>{ctx.session.activeId=doc.id;ctx.go('review');},'button secondary'));
+    const download=button('下載這份文件',()=>ctx.run(async(signal)=>{
+      const data=await createShareDocument(doc,i+1);
+      if(!signal.aborted)downloadBlob(data.blob,data.name);
+    }),'button primary');download.disabled=!complete||ctx.busy;
+    const actions=node('div','action-row');actions.append(download,button('檢查這份文件',()=>{ctx.session.activeId=doc.id;ctx.go('review');},'button secondary'));
+    row.append(info,field('輸出格式',mode),actions);
     docs.append(row);
   }
   root.append(docs);
