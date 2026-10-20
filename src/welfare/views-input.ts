@@ -3,6 +3,7 @@ import { node,button,title,card,field,input,select,checkbox,pill } from './ui-ki
 import { PURPOSES,DOCUMENT_KINDS,PERSON_ROLES } from './policies';
 import { WELFARE_SAMPLES } from './samples';
 import type { Person, DocumentKind } from './types';
+import { previewBulkPeople, importBulkPeople, type BulkPeoplePreview } from './bulk-people';
 
 export function documentPicker(ctx:UIContext):HTMLElement {
   const row=node('div','document-picker');
@@ -14,6 +15,7 @@ export function documentPicker(ctx:UIContext):HTMLElement {
 export function inputView(ctx:UIContext):HTMLElement {
   const root=node('div','view');
   root.append(title('01 / 準備資料','分享之前，先保護個案。','選擇用途，加入資料，再確認人物與敏感內容。所有處理都在這部電腦的瀏覽器內完成。'));
+  root.append(node('p','trust-note','個案檔案不上傳；開啟網站需下載程式資源。個案、人物與對照只保留在本頁記憶體。'));
   const purposes=node('div','purpose-grid');
   for(const purpose of PURPOSES){
     const b=button('',()=>{ctx.session.setPurpose(purpose.id);ctx.render();},`purpose ${ctx.session.purpose===purpose.id?'selected':''}`);
@@ -78,6 +80,7 @@ export function peopleView(ctx:UIContext):HTMLElement {
   people.append(button('＋ 新增人物',()=>{
     ctx.session.people.push({id:crypto.randomUUID(),groupId:doc.groupId,name:'',aliases:[],role:PERSON_ROLES[0]??'案主',confirmed:false});ctx.render();
   }));root.append(people);
+  root.append(bulkPeopleEditor(ctx));
   const source=card('原文參考');source.append(node('pre','source-preview',doc.document.text));root.append(source);
   root.append(button('前往人工覆核 →',()=>ctx.go('review'),'button primary'));return root;
 }
@@ -94,4 +97,29 @@ function personEditor(ctx:UIContext,person:Person):HTMLElement {
     person.confirmed=checked;ctx.invalidate();
   }),button('移除',()=>{ctx.session.people=ctx.session.people.filter(p=>p.id!==person.id||p.groupId!==person.groupId);ctx.invalidate();},'button text-button'));
   return row;
+}
+
+function bulkPeopleEditor(ctx:UIContext):HTMLElement {
+  const panel=card('批次加入人物');const doc=ctx.session.active!;const groupId=doc.groupId;
+  panel.append(node('p','muted','一行一人，可只填姓名，或貼上以 Tab 分隔的「姓名、角色、別名」。別名以「、」分隔。先預覽並修正錯誤，再確認加入；新人物與別名均須逐一人工確認。'));
+  panel.append(node('p','fine',`最多 100 行；姓名及每個別名最多 120 字元，每人最多 20 個別名。角色可留空為「待確認」，或使用：${PERSON_ROLES.join('、')}。只保留在本次頁面記憶體，重新整理或清除後即消失。`));
+  panel.append(node('pre','source-preview','王怡安\n陳美惠\t母親\t小惠、陳女士'));
+  const text=node('textarea','control');text.rows=5;text.setAttribute('aria-label','批次人物清單');text.placeholder='每行一人；可從試算表複製姓名、角色、別名三欄。';
+  const output=node('div');output.setAttribute('aria-live','polite');let preview:BulkPeoplePreview|undefined;
+  const add=button('確認加入人物',()=>{
+    if(!preview)return;
+    if(ctx.session.active!==doc||doc.groupId!==groupId){ctx.notify('目前文件或案件已變動，請重新預覽。');return;}
+    try{const count=importBulkPeople(ctx.session,doc.id,preview);ctx.notify(`已加入 ${count} 位未確認人物，請逐一核對。`);ctx.render();}
+    catch(error){preview=undefined;add.disabled=true;ctx.notify(error instanceof Error?error.message:'加入失敗，請重新預覽。');}
+  },'button primary');add.disabled=true;
+  text.oninput=()=>{preview=undefined;add.disabled=true;output.replaceChildren(node('p','muted','清單已修改，請重新預覽。'));};
+  const inspect=button('預覽人物清單',()=>{
+    preview=previewBulkPeople(text.value,ctx.session.people,doc.groupId);output.replaceChildren();
+    output.append(node('p','',`預計新增 ${preview.additions.length} 人；略過重複 ${preview.duplicates.length} 行；錯誤 ${preview.errors.length} 行。`));
+    for(const draft of preview.additions)output.append(node('p','fine',`${draft.name} · ${draft.role} · 別名：${draft.aliases.join('、')||'無'} · 未確認`));
+    for(const issue of [...preview.duplicates,...preview.errors])output.append(node('p','fine',`第 ${issue.line} 行：${issue.message}`));
+    if(preview.errors.length)output.append(node('p','', '請修正全部錯誤後重新預覽；本次不會部分加入。'));
+    add.disabled=Boolean(preview.errors.length)||!preview.additions.length;
+  });
+  panel.append(field('貼上人物清單',text),inspect,output,add);return panel;
 }

@@ -1,39 +1,95 @@
 import type { UIContext } from './ui-context';
-import { node,button,title,card,field,input,select,pill } from './ui-kit';
-import { buildShareArchive,buildRecoveryBundle,createShareDocument,downloadBlob } from './export';
+import { node,button,title,card,field,input,select,pill,checkbox } from './ui-kit';
+import { buildShareArchive,buildRecoveryBundle,createShareDocument,copyShareText,downloadBlob,type ShareEntry } from './export';
+import { inspectOutput,isOutputApproved,approveOutputRisks,revokeOutputApproval,captureOutputGuard,type OutputScan } from './output-scan';
 import { encryptRecovery,decryptRecovery,restoreExactText,parseLegacyMapping,type RecoveryBundle } from './vault';
 import { parseMarkers } from '../core/codes';
 import { applyEdits } from '../core/redactor';
+
+function deliveryGuard(ctx:UIContext,entries:ShareEntry[],signal:AbortSignal):()=>void {
+  const view=ctx.view,activeId=ctx.session.activeId,documents=[...ctx.session.documents],purpose=ctx.session.purpose;
+  const checks=entries.map(entry=>captureOutputGuard(entry,signal));
+  return ()=>{
+    checks.forEach(check=>check());
+    if(ctx.view!==view||ctx.session.activeId!==activeId||ctx.session.purpose!==purpose||
+      ctx.session.documents.length!==documents.length||ctx.session.documents.some((doc,i)=>doc!==documents[i]))
+      throw new Error('畫面或文件清單已變動，已停止輸出');
+  };
+}
 
 export function exportView(ctx:UIContext):HTMLElement {
   const root=node('div','view');root.append(title('04 / 匯出','只把需要的內容交出去。','分享文件與還原對照分開下載。每份文件都必須完成項目核對與全文覆核，才可匯出或複製。'));
   if(!ctx.session.documents.length){root.append(card('請先加入資料'));return root;}
   const docs=card('本次匯出內容');
+  docs.append(node('p','muted','再次使用同一套本機規則與人物候選辨識檢查處理後文字；無法找出所有未知姓名或間接辨識線索，不保證完全匿名。'));
+  const readyDocuments=new Set<ShareEntry>();
   for(const [i,doc] of ctx.session.documents.entries()){
     const row=node('div','export-row');const complete=doc.reviewConfirmed&&doc.findings.every(f=>f.reviewed);
     const info=node('div');info.append(node('h3','',`文件 ${i+1}`),pill(complete?'已覆核':'待覆核',complete?'success':'warning'),node('p','muted',`${doc.findings.filter(f=>f.action!=='keep').length} 處處理 · ${doc.findings.filter(f=>f.action==='keep').length} 處保留`));
+    let scan:OutputScan|undefined;
+    try{scan=inspectOutput(doc);}catch{info.append(node('p','notice-inline','文件或項目位置已變動，請回人工覆核修正後重新檢查。'));}
+    if(scan){
+      const approved=isOutputApproved(doc,scan);
+      const summary=node('ul','output-check-summary');
+      summary.append(node('li','',`全文覆核：${doc.reviewConfirmed?'已完成':'未完成'}；項目核對：${doc.findings.filter(f=>f.reviewed).length} / ${doc.findings.length}`),
+        node('li','',`格式限制：${doc.report.issues.length} 項；${doc.report.nativeAllowed?'可選原格式（產檔時仍須檢查）':'原格式不可匯出，只能輸出已覆核文字'}`),
+        node('li','',`已確認保留：${scan.confirmedKeeps.length} 處；新增疑似項目：${scan.risks.length}`),
+        node('li','',`已知原值：${scan.knownOriginalsRemain?'處理後文字仍有殘留，禁止輸出':'處理後文字檢查未見已選定遮罩原值殘留'}`),
+        node('li','',doc.mode==='native'&&['docx','xlsx','pdf'].includes(doc.document.format)
+          ?'原格式檔案尚未產生；產生後才檢查實際輸出內容與支援的封裝結構。'
+          :'目前為文字輸出；不產生或檢查原格式封裝。'));
+      info.append(summary);
+      if(doc.report.issues.length){
+        const limits=node('details');limits.append(node('summary','','查看格式限制'));
+        const list=node('ul');doc.report.issues.forEach(issue=>list.append(node('li','',issue.message)));limits.append(list);info.append(limits);
+      }
+      if(scan.risks.length){
+        const risks=node('details');risks.open=true;risks.append(node('summary','',`新增疑似項目（${scan.risks.length}）`));
+        const list=node('ol','output-risk-list');
+        scan.risks.forEach(f=>{
+          const reason=f.source==='person'?'符合本案人物、別名或姓名欄位候選':`符合「${f.category}」既有規則`;
+          const item=node('li');item.append(node('strong','',f.original),
+            node('p','muted',`理由：${reason}；處理後文字第 ${f.start+1}–${f.end} 字。`));list.append(item);
+        });risks.append(list);info.append(risks);
+        const signature=scan.signature;
+        const consent=checkbox('我已檢查本文件新增疑似項目，確認適合目前用途',approved,checked=>{
+          try{if(checked)approveOutputRisks(doc,signature);else revokeOutputApproval(doc);}
+          catch(error){ctx.notify(error instanceof Error?error.message:'請重新檢查');}
+          ctx.render();
+        });
+        const box=consent.querySelector('input')!;box.setAttribute('data-output-approval',doc.id);
+        box.disabled=!complete||scan.knownOriginalsRemain||ctx.busy;info.append(consent);
+      }
+      if(complete&&!scan.knownOriginalsRemain&&(!scan.risks.length||approved))readyDocuments.add(doc);
+    }
     const options=[{value:'text',label:'純文字 TXT（建議）'}];
     const nativeLabel=doc.document.format==='pdf'?'PDF（重新生成文字版）':doc.document.format==='docx'?'DOCX（處理後 Word）':doc.document.format==='xlsx'?'XLSX（處理後活頁簿）':'Markdown（處理後文字）';
     if(doc.report.nativeAllowed&&doc.document.format!=='txt')options.push({value:'native',label:nativeLabel});
-    const mode=select(options,doc.mode);mode.onchange=()=>{doc.mode=mode.value as 'native'|'text';};
+    const mode=select(options,doc.mode);mode.disabled=ctx.busy;mode.onchange=()=>{doc.mode=mode.value as 'native'|'text';ctx.session.touchReview(doc);ctx.render();};
     const download=button('下載這份文件',()=>ctx.run(async(signal)=>{
-      const data=await createShareDocument(doc,i+1);
-      if(!signal.aborted)downloadBlob(data.blob,data.name);
-    }),'button primary');download.disabled=!complete||ctx.busy;
+      const check=deliveryGuard(ctx,[doc],signal);
+      const data=await createShareDocument(doc,i+1,{signal});check();
+      downloadBlob(data.blob,data.name);
+    }),'button primary');download.disabled=!readyDocuments.has(doc)||ctx.busy;
     const actions=node('div','action-row');actions.append(download,button('檢查這份文件',()=>{ctx.session.activeId=doc.id;ctx.go('review');},'button secondary'));
     row.append(info,field('輸出格式',mode),actions);
     docs.append(row);
   }
   root.append(docs);
-  const ready=ctx.session.documents.every(d=>d.reviewConfirmed&&d.findings.every(f=>f.reviewed));
+  const ready=ctx.session.documents.every(d=>readyDocuments.has(d));
   const share=card('分享文件');share.append(node('p','muted','下載包只有處理後文件與不含原值的處理摘要，不含還原對照。純文字只包含畫面可見的抽取內容。'));
-  const shareButton=button('下載分享包',()=>ctx.run(async(signal)=>{const blob=await buildShareArchive(ctx.session.documents,ctx.session.purpose);if(!signal.aborted)downloadBlob(blob,'社福分享文件.zip');}),'button primary');shareButton.disabled=!ready||ctx.busy;
+  const shareButton=button('下載分享包',()=>ctx.run(async(signal)=>{
+    const check=deliveryGuard(ctx,ctx.session.documents,signal);
+    const blob=await buildShareArchive(ctx.session.documents,ctx.session.purpose,{signal});check();downloadBlob(blob,'社福分享文件.zip');
+  }),'button primary');shareButton.disabled=!ready||ctx.busy;
   const copy=button('複製目前文件',()=>ctx.run(async(signal)=>{
-    const doc=ctx.session.active!;const data=await createShareDocument({...doc,mode:'text'},ctx.session.documents.indexOf(doc)+1);
-    if(signal.aborted)return;await navigator.clipboard.writeText(data.text);ctx.notify('已複製處理後文字');
-  }));copy.disabled=!ready||ctx.busy;
+    const doc=ctx.session.active;if(!doc)throw new Error('請先選擇文件');
+    const check=deliveryGuard(ctx,[doc],signal);
+    await copyShareText(doc,ctx.session.documents.indexOf(doc)+1,async text=>{check();await navigator.clipboard.writeText(text);},{signal});
+    check();ctx.notify('已複製處理後文字');
+  }));copy.disabled=!ctx.session.active||!readyDocuments.has(ctx.session.active)||ctx.busy;
   const actions=node('div','action-row');actions.append(shareButton,copy);share.append(actions);
-  if(!ready)share.append(node('p','notice-inline','尚有未完成覆核的文件。請回到人工覆核確認全文與格式限制。'));
+  if(!ready)share.append(node('p','notice-inline','尚有文件未完成覆核或輸出檢查。請查看各文件摘要，回到人工覆核修改，或確認新增疑似項目。'));
   root.append(share);
   const vault=card('另存還原對照（選用）');vault.append(node('p','muted','對照檔含可還原的原值與原檔名，請獨立保管。使用 AES-256-GCM 加密；密碼無法找回。請保留相同版本的純文字匯出，供之後逐字還原。'));
   const password=input('','至少 8 個字元，建議使用較長密語');password.type='password';password.autocomplete='new-password';
@@ -42,8 +98,10 @@ export function exportView(ctx:UIContext):HTMLElement {
   const save=button('下載加密對照檔',()=>{
     const secret=password.value;const repeated=confirm.value;password.value='';confirm.value='';
     ctx.run(async(signal)=>{if(secret!==repeated)throw new Error('兩次輸入的密碼不相同');
-      const encoded=await encryptRecovery(await buildRecoveryBundle(ctx.session.documents),secret);
-      if(!signal.aborted)downloadBlob(new Blob([encoded],{type:'application/json'}),'社福還原對照.encrypted.json');
+      const check=deliveryGuard(ctx,ctx.session.documents,signal);
+      const bundle=await buildRecoveryBundle(ctx.session.documents,{signal});check();
+      const encoded=await encryptRecovery(bundle,secret);check();
+      downloadBlob(new Blob([encoded],{type:'application/json'}),'社福還原對照.encrypted.json');
     });
   });save.disabled=!ready||ctx.busy;vault.append(save);root.append(vault);return root;
 }

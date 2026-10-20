@@ -3,6 +3,7 @@ import { BUILTIN_PATTERNS } from '../core/patterns';
 import type { TextEdit } from '../core/types';
 import type { DetectionConfig, Person, WelfareFinding } from './types';
 import { PERSON_ROLES } from './policies';
+import { detectLocalIdentifiers } from './local-identifiers';
 
 const NOTICE = '規則建議，請逐項覆核；無法保證已找出所有敏感資訊。';
 const CONTEXTS = new Set(['健康資訊', '保護資訊', '經濟資訊', '職業', '日期', '年齡', '金額']);
@@ -67,6 +68,7 @@ export function detectWelfare(text: string, config: DetectionConfig): WelfareFin
   scan(/(?:身分證(?:字號)?|身份證(?:字號)?)[\t ]*[:：]?[\t ]*([A-Za-z][12]\d{8})(?!\d)/gu, '身分證', 115, true);
   scan(/(?<![A-Za-z0-9])(?:[A-Z][89]\d{8}|[A-Z][A-D]\d{8})(?![A-Za-z0-9])/gu, '居留證', 110);
   scan(/(?:銀行帳號|郵局帳號|金融帳號|匯款帳號|存款帳號|帳號)[\t ]*[:：][\t ]*(\d(?:[\d -]{4,30}\d))(?!\d)/gu, '銀行帳號', 120, true);
+  for (const hit of detectLocalIdentifiers(text)) add(hit.start, hit.end, hit.category, 121, { message: `${hit.message}${NOTICE}` });
   const fields: [string, string][] = [
     ['案號|個案編號|案件編號|服務編號', '案號'], ['通報編號|通報案號|通報號', '通報編號'],
     ['病歷號(?:碼)?|病歷編號', '病歷號'], ['公文文號|公文號|發文字號|文號', '公文文號'], ['安置編號|安置案號', '安置編號'],
@@ -107,7 +109,7 @@ export function detectWelfare(text: string, config: DetectionConfig): WelfareFin
   }
   for (const p of proposePeople(text, config.groupId)) if (!names.has(p.name)) names.set(p.name, [{ person: p, replacement: '[姓名]' }]);
   for (const [name, owners] of names) {
-    const confirmed = owners.filter(o => o.person.confirmed), ambiguous = confirmed.length > 1;
+    const confirmed = owners.filter(o => o.person.confirmed), ambiguous = owners.length > 1;
     const owner = !ambiguous && confirmed.length === 1 ? confirmed[0] : undefined;
     let from = 0;
     for (;;) {
@@ -115,7 +117,7 @@ export function detectWelfare(text: string, config: DetectionConfig): WelfareFin
       if (/^[A-Za-z]/u.test(name) && /[A-Za-z]/u.test(text[start - 1] ?? '')) continue;
       if (/[A-Za-z]$/u.test(name) && /[A-Za-z]/u.test(text[from] ?? '')) continue;
       add(start, from, '姓名', 90, { source: 'person', replacement: owner?.replacement ?? '[姓名]', personId: owner?.person.id,
-        message: ambiguous ? `姓名或別名歧義：同一文字對應多位已確認人物。${NOTICE}` : NOTICE });
+        message: ambiguous ? `姓名或別名歧義：同一文字對應多位人物，包含尚未確認的候選。${NOTICE}` : NOTICE });
     }
   }
   for (const m of text.matchAll(/(?<!\d)(?:(民國)[\t ]*)?(\d{2,4})[\t ]*(?:年|[-/.])[\t ]*(\d{1,2})[\t ]*(?:月|[-/.])[\t ]*(\d{1,2})(?:[\t ]*日)?(?!\d)/gu)) {
