@@ -8,4 +8,6 @@
 - Portable package: built, extracted, all file hashes verified and bundled runtime started; 4/4 checks passed. Final artifact evidence is artifacts/package-verification.json.
 - Independent whole-branch review: approved after all three Important findings were fixed; see docs/final-review.md.
 - Delivery: local preview, Windows portable ZIP, source, usage instructions and pilot checklist.
-- Pending user-arranged scope: practitioner pilot, independent real-world corpus and external hosting target. Physical network-disconnection and narrow-screen visual testing remain unverified.
+- Public launch complete on 2026-10-20: public GitHub repository, Pages HTTPS site, main CI deployment, contributor/AI instructions, trial page, fictional Word/PDF downloads and local feedback form. See docs/launch-verification.md.
+- Launch verification: 501/501 local and remote CI tests, production browser 11/11, HTTP/build comparison 11/11; real UI DOCX/PDF downloads independently reread.
+- Pending user-arranged scope: practitioner pilot and independent real-world corpus. Physical network-disconnection and narrow-screen visual testing remain unverified.

@@ -5,6 +5,8 @@
 - 原始碼：<https://github.com/paulchen01/welfare-deidentification>
 - 發布分支：`main`。網站由 `.github/workflows/pages.yml` 建置，不手動編輯產生的檔案。
 
+2026-10-20 已完成首次公開部署與正式站驗收，結果見 [上線驗收紀錄](launch-verification.md)。
+
 GitHub repository Settings → Pages → Source 使用 **GitHub Actions**。每次 main 推送或手動執行 workflow 會先跑測試，再建置與部署；Pull Request 只驗證，不部署。部署完成以 Actions 成功、線上頁面及檔案實測為準，推送成功本身不等於上線。
 
 建置設定 `VITE_BASE_PATH=/welfare-deidentification/`，保留 GitHub 專案子路徑；未設定時使用相對路徑，供本機離線包使用。`scripts/prepare-pages.mjs` 只公開列入清單的靜態資源，不包含 artifacts、歷史範例、原始個案或加密對照。OCR、PDF worker、語言模型及中文字型均從同一網站載入。
