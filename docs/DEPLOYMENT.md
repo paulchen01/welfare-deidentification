@@ -5,6 +5,8 @@
 - 原始碼：<https://github.com/paulchen01/welfare-deidentification>
 - 發布分支：`main`。網站由 `.github/workflows/pages.yml` 建置，不手動編輯產生的檔案。
 
+依使用者後續要求，GitHub 儲存庫已改為 **PRIVATE**，供擁有者及獲授權協作者／AI 使用。社工試用網站目前維持公開，與儲存庫權限分開；瀏覽器執行的前端資源仍能從網站下載。不要因 AI 存取失敗而把儲存庫改回公開。
+
 2026-10-20 已完成首次公開部署與正式站驗收，結果見 [上線驗收紀錄](launch-verification.md)。
 
 GitHub repository Settings → Pages → Source 使用 **GitHub Actions**。每次 main 推送或手動執行 workflow 會先跑測試，再建置與部署；Pull Request 只驗證，不部署。部署完成以 Actions 成功、線上頁面及檔案實測為準，推送成功本身不等於上線。

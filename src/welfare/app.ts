@@ -44,6 +44,7 @@ export function mountWelfareApp(host:HTMLElement):UIContext {
     render(){
       const shell=node('div','workspace');const sidebar=node('aside','sidebar');
       const brand=node('div','brand');brand.append(node('span','brand-symbol','守'),node('div','brand-name','社福去識別化'),node('small','','工作流程版 · 0.1'));
+      brand.append(node('p','brand-credit','飽螺的社工甘苦便條紙 製作'));
       const nav=node('nav','workflow-nav');nav.setAttribute('aria-label','工作流程');
       const views:[WorkspaceView,string,string][]=[['input','01','加入資料'],['people','02','人物與規則'],['review','03','人工覆核'],['export','04','匯出文件']];
       for(const [id,num,label]of views){const b=button('',()=>ctx.go(id),`nav-item ${ctx.view===id?'active':''}`);b.append(node('span','nav-number',num),node('span','',label));b.disabled=ctx.busy;if(id===ctx.view)b.setAttribute('aria-current','step');nav.append(b);}
