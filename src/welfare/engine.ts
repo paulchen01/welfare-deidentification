@@ -107,6 +107,7 @@ export function detectWelfare(text: string, config: DetectionConfig): WelfareFin
       const owners = names.get(name) ?? []; owners.push({ person: p, replacement }); names.set(name, owners);
     }
   }
+  const rosterNames = new Set(names.keys());
   for (const p of proposePeople(text, config.groupId)) if (!names.has(p.name)) names.set(p.name, [{ person: p, replacement: '[姓名]' }]);
   for (const [name, owners] of names) {
     const confirmed = owners.filter(o => o.person.confirmed), ambiguous = owners.length > 1;
@@ -141,9 +142,16 @@ export function detectWelfare(text: string, config: DetectionConfig): WelfareFin
     const n = Number(m[1].replaceAll(',', '')), unit = n < 10000 ? 1000 : n < 100000 ? 10000 : 100000, low = Math.floor(n / unit) * unit;
     add(m.index!, m.index! + m[0].length, '金額', 30, { generalized: `${low.toLocaleString('en-US')}–${(low + unit - 1).toLocaleString('en-US')}元` });
   }
+  // A corrected confirmed name/alias overrides only a temporary longer proposal
+  // starting at that exact occurrence. Explicit roster entries retain their existing ordering.
+  const confirmedNameEnds = new Map<number, number>();
+  for (const c of candidates) if (c.category === '姓名' && c.personId) {
+    confirmedNameEnds.set(c.start, Math.min(confirmedNameEnds.get(c.start) ?? c.end, c.end));
+  }
   // Split sensitive context around higher-priority identifiers instead of dropping its remaining text.
   const chosen: Candidate[] = [];
   for (const c of candidates.sort((a, b) => b.priority - a.priority || (b.end - b.start) - (a.end - a.start) || a.start - b.start)) {
+    if (c.source === 'person' && !rosterNames.has(c.original) && (confirmedNameEnds.get(c.start) ?? c.end) < c.end) continue;
     if (c.category === '姓名') { if (chosen.every(k => !intersects(c, k))) chosen.push(c); continue; }
     let segments = [{ start: c.start, end: c.end }];
     for (const k of chosen) segments = segments.flatMap(s => !intersects(s, k) ? [s] : [{ start: s.start, end: Math.min(s.end, k.start) }, { start: Math.max(s.start, k.end), end: s.end }].filter(s => s.start < s.end));
