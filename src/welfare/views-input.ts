@@ -15,6 +15,7 @@ export function documentPicker(ctx:UIContext):HTMLElement {
 export function inputView(ctx:UIContext):HTMLElement {
   const root=node('div','view');
   root.append(title('01 / 準備資料','分享之前，先保護個案。','選擇用途，加入資料，再確認人物與敏感內容。所有處理都在這部電腦的瀏覽器內完成。'));
+  root.append(node('p','trust-note','個案檔案不上傳；開啟網站需下載程式資源。個案、人物與對照只保留在本頁記憶體。'));
   const purposes=node('div','purpose-grid');
   for(const purpose of PURPOSES){
     const b=button('',()=>{ctx.session.setPurpose(purpose.id);ctx.render();},`purpose ${ctx.session.purpose===purpose.id?'selected':''}`);

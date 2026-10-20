@@ -4,8 +4,12 @@ import type { Person, Purpose, DocumentKind } from './types';
 import type { FormatSafetyReport } from './document-safety';
 import type { ShareEntry } from './export';
 import { DEFAULT_PROFILE, type InstitutionProfile } from './profile';
+import { resetReview,touchReview,type ReviewState,type ReviewHistoryEntry } from './review-actions';
 
-export interface WorkspaceDocument extends ShareEntry { groupId:string; kind:DocumentKind; reviewScope?:string }
+export interface WorkspaceDocument extends ShareEntry {
+  groupId:string; kind:DocumentKind; reviewScope?:string;
+  reviewRevision?:number; reviewState?:ReviewState; reviewHistory?:ReviewHistoryEntry[];
+}
 export type WorkspaceView = 'input' | 'people' | 'review' | 'export' | 'restore' | 'settings';
 
 /** Deliberately memory-only. No persistence of raw documents, people or mappings. */
@@ -34,15 +38,17 @@ export class WorkspaceSession {
     const manual = doc.findings.filter((f) => f.source === 'manual' || f.source === 'field').map((f) => ({...f, reviewed:false}));
     const automatic = detectWelfare(doc.document.text, {purpose:this.purpose,groupId:doc.groupId,people:this.people.filter(p=>p.name.trim()),customRules:this.profile.rules});
     doc.findings = [...automatic.filter((f) => !manual.some((m) => f.start < m.end && f.end > m.start)), ...manual].sort((a,b) => a.start-b.start);
-    doc.reviewConfirmed = false;
+    resetReview(doc);
   }
+  touchReview(doc:WorkspaceDocument):void {touchReview(doc);}
   reanalyseAll():void { this.documents.forEach((d) => this.reanalyse(d)); }
   setPurpose(purpose:Purpose):void { this.purpose = purpose; this.reanalyseAll(); }
   remove(id:string):void {
+    const removed=this.documents.find(d=>d.id===id);if(removed)resetReview(removed);
     this.documents = this.documents.filter((d) => d.id !== id);
     const groups = new Set(this.documents.map((d) => d.groupId));
     this.people = this.people.filter((p) => groups.has(p.groupId));
     if (this.activeId === id) this.activeId = this.documents[0]?.id ?? '';
   }
-  clear():void { this.documents = []; this.people = []; this.activeId = ''; this.profile=structuredClone(DEFAULT_PROFILE);this.profileDraft=undefined;this.purpose='ai';this.kind='record'; }
+  clear():void { this.documents.forEach(resetReview);this.documents = []; this.people = []; this.activeId = ''; this.profile=structuredClone(DEFAULT_PROFILE);this.profileDraft=undefined;this.purpose='ai';this.kind='record'; }
 }

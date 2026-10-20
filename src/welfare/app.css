@@ -6,3 +6,37 @@
 @media(prefers-reduced-motion:reduce){*{animation:none!important;scroll-behavior:auto!important;transition:none!important}}
 .brand-credit{margin-top:9px;color:#c5d8cc;font-size:.75rem;line-height:1.7;letter-spacing:.01em}
 @media(max-width:760px){.brand{flex-wrap:wrap;row-gap:6px}.brand-credit{flex-basis:100%;padding-left:43px;margin-top:0;font-size:.72rem}}
+
+/* Review controls remain legible at narrow widths and browser zoom. */
+:root{font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif}
+:focus-visible{outline:3px solid #174f46;outline-offset:3px;box-shadow:0 0 0 6px #fff}
+.sidebar :focus-visible{outline-color:#fff0b3;box-shadow:0 0 0 6px #183f3b}
+.control,.button,.purpose,.sample-button{border-color:#6f8177}
+.control,.field-label,.check,.button,.status-line,.notice p,.notice-inline,.export-row p{font-size:1rem}
+.footer{color:#52635a;font-size:.875rem}
+.trust-note{font-size:1rem;background:#eef5eb;border-left:4px solid var(--teal);padding:14px 18px}
+.view small,.view .fine,.view .pill,.purpose .muted,.section-heading>.muted{font-size:1rem}
+.review-view .document-text{font-size:18px}
+.review-view .field-label,.review-view .control,.review-view .check,.review-view .replacement,.review-view .finding-value strong,.review-view .finding-value small,.review-view .pill,.review-status,.keyboard-help,.review-page-summary{font-size:1rem}
+.review-view .finding{grid-template-columns:minmax(0,1.7fr) minmax(130px,1fr) minmax(120px,.8fr);gap:12px 18px;padding:22px 0;scroll-margin-block:24px}
+.review-view .finding>.field{margin:0}
+.review-view .finding>.replacement{grid-column:1/3}
+.review-view .finding>.check{justify-self:start}
+.review-view .finding-value{align-self:start}
+.review-status{font-weight:700;color:#82520d}
+.review-status.done{color:#285d36}
+.review-toolbar .field{max-width:360px}
+.review-toolbar h2{margin-bottom:8px}
+.keyboard-help{margin-top:16px;color:#4a5c55}
+.batch-editor{grid-column:1/-1;border:1px solid var(--line);border-radius:6px;padding:12px 16px}
+.batch-editor summary{font-size:1rem;color:var(--teal)}
+.batch-editor[open]{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 16px}
+.batch-editor>summary,.batch-editor>p,.batch-preview{grid-column:1/-1}
+.batch-editor>.field{margin:0}
+.batch-editor>.button{justify-self:start;align-self:start;white-space:normal}
+.batch-preview{overflow-wrap:anywhere}
+.review-view .document-text mark{border-bottom-color:#936622}
+.review-view .document-text mark.reviewed{border-bottom-color:#447347}
+.review-view .document-text mark:focus-visible,.review-view .finding:focus-visible{outline:3px solid #174f46;outline-offset:3px;box-shadow:0 0 0 6px #fff}
+@media(max-width:1100px){.review-view .finding{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.review-view .finding-value{grid-column:1/-1}.review-view .finding>.replacement{grid-column:1}.batch-editor[open]{grid-template-columns:1fr}}
+@media(max-width:760px){.review-view .finding{grid-template-columns:minmax(0,1fr)}.review-view .finding>*,.review-view .finding>.replacement{grid-column:1}.review-view .card{padding:18px}.review-view .action-row>.button{flex:1 1 150px;min-width:0}.review-view .review-columns .card{position:static}.review-view .document-text{max-height:55vh}.topbar{height:auto;min-height:65px;flex-wrap:wrap;padding-block:12px}.check,.button,.field-label,.notice p,.notice-inline,.export-row p{font-size:1rem}.footer{font-size:.875rem}}
