@@ -3,6 +3,12 @@ import { mountWelfareApp } from '../../src/welfare/app';
 describe('welfare workflow interface', () => {
   beforeEach(()=>{vi.spyOn(window,'scrollTo').mockImplementation(()=>{});});
   afterEach(()=>{vi.restoreAllMocks();window.getSelection()?.removeAllRanges();});
+  it('labels Markdown native export without claiming it is an Excel workbook',()=>{
+    const host=document.createElement('div');const app=mountWelfareApp(host);
+    app.session.add({fileName:'trial.md',format:'md',text:'# 虛構資料',handle:null},{nativeAllowed:true,issues:[]});
+    app.go('export');
+    expect(host.querySelector('option[value="native"]')?.textContent).toBe('Markdown（處理後文字）');
+  });
   it('downloads a reviewed single file while another file remains unreviewed',async()=>{
     const exporting=await import('../../src/welfare/export');const download=vi.spyOn(exporting,'downloadBlob').mockImplementation(()=>{});
     const host=document.createElement('div');const app=mountWelfareApp(host);

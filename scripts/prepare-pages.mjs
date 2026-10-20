@@ -4,7 +4,7 @@ import { join } from 'node:path';
 const stage=await mkdtemp('pages-stage-');
 const files=['index.html','verification.html','trial.html','trial.css','trial.js','robots.txt','llms.txt','llms-full.txt'];
 for(const file of files)await cp(join('dist',file),join(stage,file));
-for(const dir of ['assets','fonts','ocr','trial-assets'])await cp(join('dist',dir),join(stage,dir),{recursive:true});
+for(const dir of ['assets','fonts','ocr','trial-assets','licenses'])await cp(join('dist',dir),join(stage,dir),{recursive:true});
 await mkdir('artifacts',{recursive:true});
 const target=join('artifacts',stage);await rename(stage,target);
 console.log(target);

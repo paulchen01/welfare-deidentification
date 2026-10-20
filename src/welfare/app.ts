@@ -57,6 +57,7 @@ export function mountWelfareApp(host:HTMLElement):UIContext {
       const content=ctx.view==='input'?inputView(ctx):ctx.view==='people'?peopleView(ctx):ctx.view==='review'?reviewView(ctx):ctx.view==='export'?exportView(ctx):ctx.view==='restore'?restoreView(ctx,restore):settingsView(ctx);
       if(ctx.busy)content.setAttribute('inert','');
       const footer=node('footer','footer');footer.append(node('span','','輔助辨識與覆核，不代表已達完全匿名。'),node('span','','衍生自 Dean Lin 原版；校園工作流參考 chuoneone。'));
+      const license=node('a','','來源與授權');license.href=`${import.meta.env.BASE_URL}licenses/index.html`;license.target='_blank';license.rel='noopener';footer.append(license);
       main.append(top,statusLine,content,footer);shell.append(sidebar,main);
       if(ctx.busy){const busy=node('div','busy-panel');busy.setAttribute('role','status');busy.append(node('span','spinner'),node('strong','','本機處理中'),button('取消並清除本次工作',()=>ctx.clear(),'button secondary'));shell.append(busy);}
       host.replaceChildren(shell);
