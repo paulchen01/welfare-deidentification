@@ -4,7 +4,7 @@
 
 **[開啟線上工作台](https://paulchen01.github.io/welfare-deidentification/) · [社工試用與虛構 Word／PDF 範例](https://paulchen01.github.io/welfare-deidentification/trial.html) · [協作修改說明](CONTRIBUTING.md)**
 
-線上版免登入，選取的個案文件在瀏覽器本機處理。網站資源由 GitHub Pages 提供；試用回饋只下載到你的電腦，不會自動送出。GitHub 儲存庫為私人專案，獲授權者可在其他電腦 clone 或使用 AI 協作；Claude 入口為 `CLAUDE.md`，共用規則為 `AGENTS.md`。main 通過測試後自動更新社工試用網站，詳見 [部署說明](docs/DEPLOYMENT.md)。
+線上版免登入，選取的個案文件在瀏覽器本機處理。網站資源由 GitHub Pages 提供；試用回饋只下載到你的電腦，不會自動送出。GitHub 儲存庫為公開專案，可在其他電腦 clone 或使用 AI 協作；Claude 入口為 `CLAUDE.md`，共用規則為 `AGENTS.md`，寫入與合併仍需授權。main 通過測試後自動更新社工試用網站，詳見 [部署說明](docs/DEPLOYMENT.md)。
 
 ## 開啟
 

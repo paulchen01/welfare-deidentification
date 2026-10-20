@@ -1,2 +1,2 @@
 # 社福去識別化工作流程版
-本機處理、人工覆核、分離加密還原對照。公開操作說明與虛構範例見 trial.html；來源與授權見 licenses/index.html。原始碼儲存庫與開發協作文件為私人存取，不隨網站提供。
+本機處理、人工覆核、分離加密還原對照。操作說明與虛構範例見 trial.html；來源與授權見 licenses/index.html。公開原始碼與 AI 協作指引：https://github.com/paulchen01/welfare-deidentification 。

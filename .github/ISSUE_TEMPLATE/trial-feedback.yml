@@ -4,7 +4,7 @@ title: "[試用回饋] "
 body:
   - type: markdown
     attributes:
-      value: "此私人專案的 issue 供獲授權協作者使用。請勿提供真實個案資料、原始文件、含個資的畫面或還原對照檔。可使用試用頁的虛構範例。"
+      value: "此專案的 issue 是公開的。請勿提供真實個案資料、原始文件、含個資的畫面或還原對照檔。可使用試用頁的虛構範例。"
   - type: checkboxes
     attributes:
       label: 資料確認
