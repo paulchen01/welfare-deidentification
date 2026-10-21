@@ -49,3 +49,19 @@
 .export-row summary{font-size:1rem;font-weight:600;color:var(--teal)}
 @media(max-width:1100px){.review-view .finding{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.review-view .finding-value{grid-column:1/-1}.review-view .finding>.replacement{grid-column:1}.batch-editor[open]{grid-template-columns:1fr}}
 @media(max-width:760px){.review-view .finding{grid-template-columns:minmax(0,1fr)}.review-view .finding>*,.review-view .finding>.replacement{grid-column:1}.review-view .card{padding:18px}.review-view .action-row>.button{flex:1 1 150px;min-width:0}.review-view .review-columns .card{position:static}.review-view .document-text{max-height:55vh}.topbar{height:auto;min-height:65px;flex-wrap:wrap;padding-block:12px}.check,.button,.field-label,.notice p,.notice-inline,.export-row p{font-size:1rem}.footer{font-size:.875rem}}
+
+/* Narrative review aids. */
+.topbar .pill,.sidebar-note small,.brand small{font-size:.82rem}
+.review-quickbar{position:sticky;top:0;z-index:4;display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;padding:10px 16px;background:#fafbf6;border:1px solid #6f8177;border-radius:10px;box-shadow:0 6px 18px #183f3b1f}
+.review-quickbar strong{font-size:1.05rem;margin-right:auto}
+.category-chips{display:flex;flex-wrap:wrap;gap:8px;margin:-4px 0 16px}
+.button.chip{padding:6px 12px;border-radius:999px;font-weight:500}
+.button.chip[aria-pressed="true"]{background:var(--teal);border-color:var(--teal);color:#fff}
+.batch-confirm{margin-top:16px;padding:16px 18px;border:1px solid #c89b52;border-radius:8px;background:#fffaf0}
+.batch-confirm p{color:#5c4016;margin-bottom:12px}
+.notice-block{background:#fffaf0;border:1px solid #c89b52;border-radius:10px;padding:16px 20px}
+.notice-block strong{display:block;color:#6b4712;margin-bottom:6px;font-size:1.05rem}
+.notice-block p{color:#5c4016}
+.person-hints{grid-column:1/-1;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:10px 14px;background:#eef5eb;border-radius:8px;font-size:1rem;color:#2c4a43}
+.person-hints span+.button{margin-right:8px}
+.person-editor>.button.text-button{align-self:center}

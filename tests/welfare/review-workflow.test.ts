@@ -18,7 +18,8 @@ describe('review efficiency and safety',()=>{
   it('counts the full document while filtering and paging only a bounded set of editors',()=>{
     const {host,app,doc}=setup(Array.from({length:75},()=> '電話0912345678').join('；'));
     expect(host.textContent).toContain('剩餘 75 項待核對');expect(host.querySelectorAll('[data-finding-id]').length).toBeLessThanOrEqual(30);
-    click(host,'核對本批顯示的項目');expect(doc.findings.filter(f=>f.reviewed)).toHaveLength(30);
+    click(host,'核對本批顯示的項目');expect(doc.findings.filter(f=>f.reviewed)).toHaveLength(0);expect(host.textContent).toContain('將 30 項標為已核對');
+    click(host,'確認核對這 30 項');expect(doc.findings.filter(f=>f.reviewed)).toHaveLength(30);
     expect(host.textContent).toContain('剩餘 45 項待核對');
     change(host.querySelector<HTMLSelectElement>('[aria-label="核對項目篩選"]')!,'pending');
     expect(host.querySelectorAll('[data-finding-id]')).toHaveLength(30);expect(host.textContent).toContain('全文 75 項');

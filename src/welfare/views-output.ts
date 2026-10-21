@@ -33,7 +33,7 @@ export function exportView(ctx:UIContext):HTMLElement {
       const summary=node('ul','output-check-summary');
       summary.append(node('li','',`全文覆核：${doc.reviewConfirmed?'已完成':'未完成'}；項目核對：${doc.findings.filter(f=>f.reviewed).length} / ${doc.findings.length}`),
         node('li','',`格式限制：${doc.report.issues.length} 項；${doc.report.nativeAllowed?'可選原格式（產檔時仍須檢查）':'原格式不可匯出，只能輸出已覆核文字'}`),
-        node('li','',`已確認保留：${scan.confirmedKeeps.length} 處；新增疑似項目：${scan.risks.length}`),
+        node('li','',`已確認保留：${scan.confirmedKeeps.length} 處；新增疑似項目：${scan.risks.length}${scan.risks.length?'':'（同一套規則沒有找到新的項目，不代表沒有遺漏；公司、事件與少見稱呼仍須人工讀過）'}`),
         node('li','',`已知原值：${scan.knownOriginalsRemain?'處理後文字仍有殘留，禁止輸出':'處理後文字檢查未見已選定遮罩原值殘留'}`),
         node('li','',doc.mode==='native'&&['docx','xlsx','pdf'].includes(doc.document.format)
           ?'原格式檔案尚未產生；產生後才檢查實際輸出內容與支援的封裝結構。'

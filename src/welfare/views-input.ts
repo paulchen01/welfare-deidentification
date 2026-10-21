@@ -3,6 +3,7 @@ import { node,button,title,card,field,input,select,checkbox,pill } from './ui-ki
 import { PURPOSES,DOCUMENT_KINDS,PERSON_ROLES } from './policies';
 import { WELFARE_SAMPLES } from './samples';
 import type { Person, DocumentKind } from './types';
+import { suggestAliases, suggestRole } from './narrative';
 import { previewBulkPeople, importBulkPeople, type BulkPeoplePreview } from './bulk-people';
 
 export function documentPicker(ctx:UIContext):HTMLElement {
@@ -75,24 +76,37 @@ export function peopleView(ctx:UIContext):HTMLElement {
   const people=card('人物與稱謂');
   people.append(node('p','muted','逐一核對姓名、角色與別名。確認後，所有完全相同的寫法會使用同一標記。一般稱謂如「媽媽」需你自行判斷是否會指向多個人。'));
   people.append(node('p','fine','合併同一人：將另一名稱加到別名，再移除多餘人物。拆開人物：移除該別名並另加人物。相同名字指向不同人時會標示歧義，請分段或拆成不同文件處理。'));
-  for(const person of ctx.session.people.filter(p=>p.groupId===doc.groupId)) people.append(personEditor(ctx,person));
+  for(const person of ctx.session.people.filter(p=>p.groupId===doc.groupId)) people.append(personEditor(ctx,person,doc.document.text));
   if(!ctx.session.people.some(p=>p.groupId===doc.groupId))people.append(node('p','empty','尚未找到候選姓名。可手動加入，再檢查全文。'));
   people.append(button('＋ 新增人物',()=>{
     ctx.session.people.push({id:crypto.randomUUID(),groupId:doc.groupId,name:'',aliases:[],role:PERSON_ROLES[0]??'案主',confirmed:false});ctx.render();
   }));root.append(people);
   root.append(bulkPeopleEditor(ctx));
   const source=card('原文參考');source.append(node('pre','source-preview',doc.document.text));root.append(source);
+  const unconfirmed=ctx.session.people.filter(p=>p.groupId===doc.groupId&&p.name.trim()&&!p.confirmed);
+  if(unconfirmed.length){
+    // Not a gate: unconfirmed names stay masked, but every one becomes the same [姓名].
+    const warn=node('div','notice-block');warn.setAttribute('role','note');
+    warn.append(node('strong','',`還有 ${unconfirmed.length} 位人物未確認`),node('p','',`未確認的人物一律顯示為 [姓名]，送給 AI 時無法分辨誰是誰（例如案主和照顧者）。建議先確認：${unconfirmed.slice(0,5).map(p=>p.name).join('、')}${unconfirmed.length>5?' 等':''}。`));
+    root.append(warn);
+  }
   root.append(button('前往人工覆核 →',()=>ctx.go('review'),'button primary'));return root;
 }
 
-function personEditor(ctx:UIContext,person:Person):HTMLElement {
+function personEditor(ctx:UIContext,person:Person,text:string):HTMLElement {
   const row=node('div','person-editor');
   const name=input(person.name,'完整姓名');const alias=input(person.aliases.join('、'),'以「、」分隔，例如陳女士、小安');
   const role=select(PERSON_ROLES.map(r=>({value:r,label:r})),person.role);
   const changed=()=>{person.name=name.value.trim();person.aliases=[...new Set(alias.value.split(/[、,，\n]/).map(v=>v.trim()).filter(Boolean))];person.role=role.value;person.confirmed=false;ctx.invalidate();};
   name.onchange=changed;alias.onchange=changed;role.onchange=changed;
   row.append(field('姓名',name),field('角色',role),field('別名／稱謂',alias));
-  row.append(checkbox('已確認是同一人',person.confirmed,checked=>{
+  // Suggestions from the text; nothing changes until the person presses a button and confirms.
+  const hints=node('div','person-hints');
+  const suggested=person.role==='待確認'?suggestRole(text,person.name):undefined;
+  if(suggested&&PERSON_ROLES.includes(suggested))hints.append(node('span','',`原文標示的角色：${suggested}`),button(`角色設為${suggested}`,()=>{person.role=suggested;person.confirmed=false;ctx.invalidate();},'button chip'));
+  for(const s of suggestAliases(text,person.name,person.aliases))hints.append(node('span','',`文中另有「${s.alias}」${s.count} 處，可能是同一人`),button(`加入別名「${s.alias}」`,()=>{person.aliases=[...person.aliases,s.alias];person.confirmed=false;ctx.invalidate();},'button chip'));
+  if(hints.childElementCount)row.append(hints);
+  row.append(checkbox('確認此人物（姓名、角色與別名都正確）',person.confirmed,checked=>{
     if(checked&&!person.name.trim()){ctx.notify('請先填寫人物姓名');ctx.render();return;}
     person.confirmed=checked;ctx.invalidate();
   }),button('移除',()=>{ctx.session.people=ctx.session.people.filter(p=>p.id!==person.id||p.groupId!==person.groupId);ctx.invalidate();},'button text-button'));
