@@ -162,7 +162,8 @@ export function detectWelfare(text: string, config: DetectionConfig): WelfareFin
     ids.add(p.id);
     let replacement = '[姓名]';
     if (p.confirmed) {
-      const role = PERSON_ROLES.includes(p.role) ? p.role : '人物';
+      // A confirmed person whose role is still 待確認 reads as a neutral [人物A], not [待確認A].
+      const role = PERSON_ROLES.includes(p.role) && p.role !== '待確認' ? p.role : '人物';
       const index = roles.get(role) ?? 0; roles.set(role, index + 1); replacement = marker(`${role}${suffix(index)}`);
     }
     for (const name of new Set([p.name, ...p.aliases])) {

@@ -1,4 +1,4 @@
-import { WorkspaceSession,type WorkspaceView } from './session';
+import { WorkspaceSession } from './session';
 import type { UIContext } from './ui-context';
 import { node,button,pill } from './ui-kit';
 import { inputView,peopleView } from './views-input';
@@ -6,6 +6,7 @@ import { reviewView } from './views-review';
 import { exportView,restoreView,emptyRestore } from './views-output';
 import { settingsView } from './views-settings';
 import { PURPOSES } from './policies';
+import { stepper,workflowSteps } from './progress';
 
 export function mountWelfareApp(host:HTMLElement):UIContext {
   let restore=emptyRestore();let status='';let abort:AbortController|undefined;let generation=0;
@@ -46,12 +47,20 @@ export function mountWelfareApp(host:HTMLElement):UIContext {
       const brand=node('div','brand');brand.append(node('span','brand-symbol','守'),node('div','brand-name','社福去識別化'),node('small','','工作流程版 · 0.1'));
       brand.append(node('p','brand-credit','飽螺的社工甘苦便條紙 製作'));
       const nav=node('nav','workflow-nav');nav.setAttribute('aria-label','工作流程');
-      const views:[WorkspaceView,string,string][]=[['input','01','加入資料'],['people','02','人物與規則'],['review','03','人工覆核'],['export','04','匯出文件']];
-      for(const [id,num,label]of views){const b=button('',()=>ctx.go(id),`nav-item ${ctx.view===id?'active':''}`);b.append(node('span','nav-number',num),node('span','',label));b.disabled=ctx.busy;if(id===ctx.view)b.setAttribute('aria-current','step');nav.append(b);}
+      for(const step of workflowSteps(ctx)){
+        const b=button('',()=>ctx.go(step.id),`nav-item ${ctx.view===step.id?'active':''} ${step.state}`);
+        b.append(node('span','nav-number',step.state==='done'?'✓':step.num),node('span','',step.label));b.disabled=ctx.busy;
+        if(step.id===ctx.view)b.setAttribute('aria-current','step');else if(step.state==='done')b.setAttribute('aria-description','已完成');nav.append(b);
+      }
       const secondary=node('div','secondary-nav');secondary.append(button('還原文字',()=>ctx.go('restore'),`nav-item ${ctx.view==='restore'?'active':''}`),button('機構範本',()=>ctx.go('settings'),`nav-item ${ctx.view==='settings'?'active':''}`));
       const trial=node('a','nav-item','社工試用說明 ↗');trial.href=`${import.meta.env.BASE_URL}trial.html`;trial.target='_blank';trial.rel='noopener noreferrer';secondary.append(trial);
       const note=node('div','sidebar-note');note.append(pill('本機處理','success'),node('p','','免登入，個案檔案不上傳。'),node('small','','資料只保留於本頁記憶體；重新整理或關閉頁面會失去本次工作。'));
-      sidebar.append(brand,nav,secondary,note);
+      // Narrow screens: the stepper replaces the step list, and secondary pages move into one menu.
+      const more=node('details','mobile-more');more.append(node('summary','','更多'));
+      const moreLinks=node('div','mobile-more-links');
+      moreLinks.append(button('還原對照文字',()=>{more.open=false;ctx.go('restore');},'nav-item'),button('機構範本設定',()=>{more.open=false;ctx.go('settings');},'nav-item'));
+      const trialMore=node('a','nav-item','社工試用說明 ↗');trialMore.href=trial.href;trialMore.target='_blank';trialMore.rel='noopener noreferrer';moreLinks.append(trialMore);more.append(moreLinks);
+      sidebar.append(brand,nav,secondary,note,more);
       const main=node('main','main');const top=node('header','topbar');
       top.append(node('span','workspace-label','個案資料工作台'),pill(PURPOSES.find(p=>p.id===session.purpose)?.label??''),node('span','document-count',`${session.documents.length} 份文件`),button('結束並清除',()=>ctx.clear(),'button text-button'));
       const statusLine=node('div','status-line',status);statusLine.setAttribute('role','status');statusLine.setAttribute('aria-live','polite');
@@ -59,7 +68,8 @@ export function mountWelfareApp(host:HTMLElement):UIContext {
       if(ctx.busy)content.setAttribute('inert','');
       const footer=node('footer','footer');footer.append(node('span','','輔助辨識與覆核，不代表已達完全匿名。'),node('span','','衍生自 Dean Lin 原版；校園工作流參考 chuoneone。'));
       const license=node('a','','來源與授權');license.href=`${import.meta.env.BASE_URL}licenses/index.html`;license.target='_blank';license.rel='noopener';footer.append(license);
-      main.append(top,statusLine,content,footer);shell.append(sidebar,main);
+      const workflow=['input','people','review','export'].includes(ctx.view);
+      main.append(top,statusLine);if(workflow)main.append(stepper(ctx));main.append(content,footer);shell.append(sidebar,main);
       if(ctx.busy){const busy=node('div','busy-panel');busy.setAttribute('role','status');busy.append(node('span','spinner'),node('strong','','本機處理中'),button('取消並清除本次工作',()=>ctx.clear(),'button secondary'));shell.append(busy);}
       host.replaceChildren(shell);
     },

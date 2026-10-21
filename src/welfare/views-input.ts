@@ -13,6 +13,17 @@ export function documentPicker(ctx:UIContext):HTMLElement {
   picker.onchange=()=>{ctx.session.activeId=picker.value;ctx.render();};
   row.append(picker,pill(`${ctx.session.documents.length} 份文件`));return row;
 }
+// Fixed inline icons (no external assets): building, sparkle, globe, upload.
+const ICONS:Record<string,string>={
+  internal:'<path d="M4 21V5a1 1 0 0 1 1-1h9a1 1 0 0 1 1 1v16M15 10h4a1 1 0 0 1 1 1v10M8 8h3M8 12h3M8 16h3M3 21h18"/>',
+  ai:'<path d="M12 3l1.8 4.6L18.5 9l-4.7 1.4L12 15l-1.8-4.6L5.5 9l4.7-1.4zM18 15l.9 2.1L21 18l-2.1.9L18 21l-.9-2.1L15 18l2.1-.9z"/>',
+  public:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/>',
+  upload:'<path d="M12 16V4M7 9l5-5 5 5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4"/>',
+};
+function icon(name:string,className:string):HTMLElement {
+  const wrap=node('span',className);wrap.setAttribute('aria-hidden','true');
+  wrap.innerHTML=`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;return wrap;
+}
 export function inputView(ctx:UIContext):HTMLElement {
   const root=node('div','view');
   root.append(title('01 / 準備資料','分享之前，先保護個案。','選擇用途，加入資料，再確認人物與敏感內容。所有處理都在這部電腦的瀏覽器內完成。'));
@@ -21,23 +32,31 @@ export function inputView(ctx:UIContext):HTMLElement {
   for(const purpose of PURPOSES){
     const b=button('',()=>{ctx.session.setPurpose(purpose.id);ctx.render();},`purpose ${ctx.session.purpose===purpose.id?'selected':''}`);
     b.setAttribute('aria-pressed',String(ctx.session.purpose===purpose.id));
-    b.append(node('span','purpose-title',purpose.label),node('span','muted',purpose.description));purposes.append(b);
+    const head=node('span','purpose-head');head.append(icon(purpose.id,'purpose-icon'),node('span','purpose-title',purpose.label));
+    if(purpose.id==='ai')head.append(node('span','purpose-badge','最常用'));
+    b.append(head,node('span','muted',purpose.description));purposes.append(b);
   }
   root.append(purposes);
   const entry=card('加入文件');
   const kind=select(DOCUMENT_KINDS.map(k=>({value:k.id,label:k.label})),ctx.session.kind);
   kind.onchange=()=>{ctx.session.kind=kind.value as DocumentKind;};
   entry.append(field('文件種類',kind));
+  // The drop zone is a label for the file input: click anywhere to choose, or drop files onto it.
+  const files=node('input');files.type='file';files.multiple=true;files.accept='.txt,.md,.docx,.xlsx,.pdf';files.className='file-input';files.setAttribute('aria-label','選擇文件');files.disabled=ctx.busy;
+  files.onchange=()=>{if(files.files)ctx.addFiles(Array.from(files.files));files.value='';};
+  const drop=node('label','drop-zone');
+  drop.append(icon('upload','drop-icon'),node('strong','','把 Word、PDF、Excel 或文字檔拖到這裡'),node('span','muted','TXT、MD、DOCX、XLSX、PDF · 每批最多 10 份 · 每份 100 MB'),node('span','drop-cta','選擇檔案'),files);
+  drop.ondragover=event=>{event.preventDefault();drop.classList.add('dragging');};
+  drop.ondragleave=()=>drop.classList.remove('dragging');
+  drop.ondrop=event=>{event.preventDefault();drop.classList.remove('dragging');const list=Array.from(event.dataTransfer?.files??[]);if(list.length&&!ctx.busy)ctx.addFiles(list);};
+  entry.append(drop,node('p','fine','舊版 Word（.doc）請先在 Word 另存為 .docx。掃描 PDF 首次辨識可能需要較久；圖片、簽名及未支援的隱藏內容會列入格式限制。'));
+  entry.append(node('div','or-divider','或直接貼上文字'));
   const text=node('textarea','control source-input');text.value=ctx.rawInput;text.placeholder='貼上服務紀錄、訪談逐字稿或會議紀錄……';
   text.setAttribute('aria-label','貼上待處理文字');text.oninput=()=>{ctx.rawInput=text.value;};
   entry.append(text);
   const bar=node('div','action-row');
   const add=button('加入這段文字',()=>ctx.run(async()=>ctx.addText(text.value)),'button primary');add.disabled=ctx.busy;
-  const files=node('input');files.type='file';files.multiple=true;files.accept='.txt,.md,.docx,.xlsx,.pdf';files.className='file-input';files.setAttribute('aria-label','選擇文件');
-  files.onchange=()=>{if(files.files)ctx.addFiles(Array.from(files.files));files.value='';};
-  const fileLabel=node('label','button secondary file-label','選擇檔案');fileLabel.append(files);
-  bar.append(add,fileLabel,node('small','muted','TXT、MD、Word、Excel、PDF · 每批最多 10 份'));
-  entry.append(bar,node('p','fine','檔案上限 100 MB。掃描 PDF 首次辨識可能需要較久；圖片、簽名及未支援的隱藏內容會列入格式限制。'));
+  bar.append(add);entry.append(bar);
   root.append(entry);
   if(ctx.session.documents.length){
     const loaded=card('本次資料');

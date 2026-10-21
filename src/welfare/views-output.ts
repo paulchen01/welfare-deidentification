@@ -6,6 +6,13 @@ import { encryptRecovery,decryptRecovery,restoreExactText,parseLegacyMapping,typ
 import { parseMarkers } from '../core/codes';
 import { applyEdits } from '../core/redactor';
 
+type CheckTone='ok'|'warn'|'risk'|'info';
+const CHECK_ICONS:Record<CheckTone,string>={ok:'✓',warn:'!',risk:'×',info:'i'};
+function checkItem(tone:CheckTone,text:string,action?:HTMLElement):HTMLLIElement {
+  const item=node('li',tone);const mark=node('span','check-icon',CHECK_ICONS[tone]);mark.setAttribute('aria-hidden','true');
+  item.append(mark,node('span','',text));if(action)item.append(action);return item;
+}
+
 function deliveryGuard(ctx:UIContext,entries:ShareEntry[],signal:AbortSignal):()=>void {
   const view=ctx.view,activeId=ctx.session.activeId,documents=[...ctx.session.documents],purpose=ctx.session.purpose;
   const checks=entries.map(entry=>captureOutputGuard(entry,signal));
@@ -31,11 +38,12 @@ export function exportView(ctx:UIContext):HTMLElement {
     if(scan){
       const approved=isOutputApproved(doc,scan);
       const summary=node('ul','output-check-summary');
-      summary.append(node('li','',`全文覆核：${doc.reviewConfirmed?'已完成':'未完成'}；項目核對：${doc.findings.filter(f=>f.reviewed).length} / ${doc.findings.length}`),
-        node('li','',`格式限制：${doc.report.issues.length} 項；${doc.report.nativeAllowed?'可選原格式（產檔時仍須檢查）':'原格式不可匯出，只能輸出已覆核文字'}`),
-        node('li','',`已確認保留：${scan.confirmedKeeps.length} 處；新增疑似項目：${scan.risks.length}${scan.risks.length?'':'（同一套規則沒有找到新的項目，不代表沒有遺漏；公司、事件與少見稱呼仍須人工讀過）'}`),
-        node('li','',`已知原值：${scan.knownOriginalsRemain?'處理後文字仍有殘留，禁止輸出':'處理後文字檢查未見已選定遮罩原值殘留'}`),
-        node('li','',doc.mode==='native'&&['docx','xlsx','pdf'].includes(doc.document.format)
+      const back=()=>button('回到人工覆核',()=>{ctx.session.activeId=doc.id;ctx.go('review');},'button secondary');
+      summary.append(checkItem(complete?'ok':'warn',`全文覆核：${doc.reviewConfirmed?'已完成':'未完成'}；項目核對：${doc.findings.filter(f=>f.reviewed).length} / ${doc.findings.length}`,complete?undefined:back()),
+        checkItem(doc.report.issues.length?'info':'ok',`格式限制：${doc.report.issues.length} 項；${doc.report.nativeAllowed?'可選原格式（產檔時仍須檢查）':'原格式不可匯出，只能輸出已覆核文字'}`),
+        checkItem(scan.risks.length&&!approved?'warn':'ok',`已確認保留：${scan.confirmedKeeps.length} 處；新增疑似項目：${scan.risks.length}${scan.risks.length?'':'（同一套規則沒有找到新的項目，不代表沒有遺漏；公司、事件與少見稱呼仍須人工讀過）'}`),
+        checkItem(scan.knownOriginalsRemain?'risk':'ok',`已知原值：${scan.knownOriginalsRemain?'處理後文字仍有殘留，禁止輸出':'處理後文字檢查未見已選定遮罩原值殘留'}`,scan.knownOriginalsRemain?back():undefined),
+        checkItem('info',doc.mode==='native'&&['docx','xlsx','pdf'].includes(doc.document.format)
           ?'原格式檔案尚未產生；產生後才檢查實際輸出內容與支援的封裝結構。'
           :'目前為文字輸出；不產生或檢查原格式封裝。'));
       info.append(summary);
@@ -72,6 +80,13 @@ export function exportView(ctx:UIContext):HTMLElement {
       downloadBlob(data.blob,data.name);
     }),'button primary');download.disabled=!readyDocuments.has(doc)||ctx.busy;
     const actions=node('div','action-row');actions.append(download,button('檢查這份文件',()=>{ctx.session.activeId=doc.id;ctx.go('review');},'button secondary'));
+    // Say why a download is unavailable instead of only greying it out.
+    if(download.disabled&&!ctx.busy){
+      const pending=doc.findings.filter(f=>!f.reviewed).length;
+      const reason=pending?`還有 ${pending} 項未核對`:!doc.reviewConfirmed?'尚未勾選「已重讀處理後全文」'
+        :scan?.knownOriginalsRemain?'處理後文字仍有原值殘留':scan?.risks.length?'請先確認上方的新增疑似項目':'請回到人工覆核重新檢查';
+      actions.append(node('p','blocked-reason',`無法下載：${reason}`));
+    }
     row.append(info,field('輸出格式',mode),actions);
     docs.append(row);
   }
@@ -89,7 +104,7 @@ export function exportView(ctx:UIContext):HTMLElement {
     check();ctx.notify('已複製處理後文字');
   }));copy.disabled=!ctx.session.active||!readyDocuments.has(ctx.session.active)||ctx.busy;
   const actions=node('div','action-row');actions.append(shareButton,copy);share.append(actions);
-  if(!ready)share.append(node('p','notice-inline','尚有文件未完成覆核或輸出檢查。請查看各文件摘要，回到人工覆核修改，或確認新增疑似項目。'));
+  if(!ready&&!ctx.busy)share.append(node('p','blocked-reason','無法下載：尚有文件未完成覆核或輸出檢查。請查看上方各文件的檢查清單。'));
   root.append(share);
   const vault=card('另存還原對照（選用）');vault.append(node('p','muted','對照檔含可還原的原值與原檔名，請獨立保管。使用 AES-256-GCM 加密；密碼無法找回。請保留相同版本的純文字匯出，供之後逐字還原。'));
   const password=input('','至少 8 個字元，建議使用較長密語');password.type='password';password.autocomplete='new-password';

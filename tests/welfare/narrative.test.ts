@@ -109,3 +109,9 @@ describe('person editor suggestions', () => {
     expect(suggestAliases(NOTE, '張志明', ['志明'])).toEqual([]);
   });
 });
+
+describe('person markers', () => {
+  it('uses a neutral marker for a confirmed person whose role is still pending', () => {
+    expect(redact('張志明同意。', cfg([person({ role: '待確認' })]))).toBe('[人物A]同意。');
+  });
+});
