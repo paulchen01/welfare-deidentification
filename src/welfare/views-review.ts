@@ -1,7 +1,8 @@
 import type { UIContext } from './ui-context';
 import type { WorkspaceDocument } from './session';
 import { node,button,title,card,field,input,select,checkbox,pill } from './ui-kit';
-import { renderText } from './engine';
+import { findingsToEdits,REVIEW_NOTICE } from './engine';
+import { toneOf } from './ui-tones';
 import { documentPicker } from './views-input';
 import type { WelfareFinding,FindingAction } from './types';
 import { addManualRanges,applySameWord,changeFinding,confirmFullReview,previewSameWord,REVIEW_PAGE_SIZE,reviewPage,reviewState,setReviewed,undoReview,type SameWordPreview } from './review-actions';
@@ -14,6 +15,11 @@ interface ReviewUI {
   locate:(id:string)=>void;
 }
 const rowId=(id:string)=>`finding-${id}`;
+/** Category shortcuts for manual marks, so the AI can tell a name from a diagnosis. */
+const MANUAL_CATEGORIES=['姓名','健康資訊','機構','地點','日期','職業','保護資訊','經濟資訊','人工標記'];
+// Memory-only UI state per document: last manual category and a pending batch confirmation.
+const manualCategory=new WeakMap<WorkspaceDocument,string>();
+const pendingBatch=new WeakMap<WorkspaceDocument,string[]>();
 
 export function reviewView(ctx:UIContext):HTMLElement {
   const root=node('div','view wide review-view');root.append(title('03 / 人工覆核','逐處判斷，再讀一次全文。','自動辨識可能漏掉關係、事件與少見名稱。檢查遮罩結果是否仍能辨識個案，並手動標記遺漏處。'));
@@ -52,19 +58,28 @@ export function reviewView(ctx:UIContext):HTMLElement {
   }
   const panels=node('div','review-columns');const left=card('原文');const right=card('處理後文字');
   const source=sourceText(doc,page.scoped,startOffset,endOffset,locate);
-  let preview:string;
-  try{preview=renderText(doc.document.text.slice(startOffset,endOffset),page.scoped.map(f=>({...f,start:f.start-startOffset,end:f.end-startOffset})));}catch(error){preview=error instanceof Error?`請修正設定後再預覽：${error.message}`:'請修正處理設定';}
-  left.append(source);right.append(node('pre','document-text result-text',preview));panels.append(left,right);root.append(panels);
+  left.append(source);right.append(processedText(doc,page.scoped,startOffset,endOffset));panels.append(left,right);root.append(panels);
   root.append(manualEditor(ui,source,startOffset));if(doc.document.layout?.kind==='xlsx')root.append(columnEditor(ui));
   const findings=card(`本範圍核對項目 · ${page.scoped.filter(f=>f.reviewed).length} / ${page.scoped.length}（全文 ${page.total} 項）`);
   findings.id='review-findings';findings.dataset.reviewKeyboard='';findings.tabIndex=-1;
-  findings.append(node('p','review-page-summary',`第 ${state.page+1} / ${page.pages} 批，顯示 ${page.shown.length} 項；篩選後 ${page.filtered.length} 項。每批最多 ${REVIEW_PAGE_SIZE} 項。`));
+  findings.append(node('p','review-page-summary',`第 ${state.page+1} / ${page.pages} 批，顯示 ${page.shown.length} 項；篩選後 ${page.filtered.length} 項。每批最多 ${REVIEW_PAGE_SIZE} 項。`),node('p','muted',REVIEW_NOTICE));
   if(!page.shown.length)findings.append(node('p','empty','目前篩選範圍沒有項目。這不代表已無個資，請檢查全文。'));
   for(const f of page.shown)findings.append(findingEditor(ui,f));
   const paging=node('div','action-row');
   const previous=button('上一批',()=>{state.page--;refresh('review-previous-page');});previous.id='review-previous-page';previous.disabled=state.page===0;
   const next=button('下一批',()=>{state.page++;refresh('review-next-page');});next.id='review-next-page';next.disabled=state.page>=page.pages-1;
-  paging.append(previous,next,button('核對本批顯示的項目',()=>{setReviewed(doc,page.shown.map(f=>f.id),true);refresh('review-findings');}));findings.append(paging);root.append(findings);
+  paging.append(previous,next,button('核對本批顯示的項目',()=>{pendingBatch.set(doc,page.shown.filter(f=>!f.reviewed).map(f=>f.id));refresh('review-batch-confirm');}));findings.append(paging);
+  const pending=pendingBatch.get(doc);
+  if(pending){
+    // A one-click approval of many rows defeats item review; show what it covers and ask once more.
+    const shownIds=new Set(page.shown.map(f=>f.id));const ids=pending.filter(id=>shownIds.has(id)&&doc.findings.some(f=>f.id===id&&!f.reviewed));
+    const counts=new Map<string,number>();for(const f of doc.findings)if(ids.includes(f.id))counts.set(f.category,(counts.get(f.category)??0)+1);
+    const box=node('div','batch-confirm notice');box.setAttribute('role','alert');
+    box.append(node('p','',ids.length?`將 ${ids.length} 項標為已核對：${[...counts].map(([c,n])=>`${c} ${n}`).join('、')}。請確認每一項的處理方式都看過了。`:'本批沒有尚未核對的項目。'));
+    const ok=button(`確認核對這 ${ids.length} 項`,()=>{pendingBatch.delete(doc);setReviewed(doc,ids,true);refresh('review-findings');},'button primary');ok.id='review-batch-confirm';ok.disabled=!ids.length;
+    box.append(node('div','action-row'));box.lastElementChild!.append(ok,button('取消',()=>{pendingBatch.delete(doc);refresh('review-findings');}));findings.append(box);
+  }
+  root.append(findings);
   const confirm=card('全文覆核');
   // Only displayed editors may be approved in a batch; the full-document gate still checks every finding.
   confirm.append(checkbox('我已逐項核對此檢視範圍（本批顯示項目）的處理方式，標記為已核對',page.shown.length>0&&page.shown.every(f=>f.reviewed),checked=>{setReviewed(doc,page.shown.map(f=>f.id),checked);refresh('review-range-confirm');}));
@@ -78,7 +93,7 @@ export function reviewView(ctx:UIContext):HTMLElement {
   root.addEventListener('keydown',event=>{
     if(event.key!=='Tab'||event.isComposing||event.altKey||event.ctrlKey||event.metaKey)return;
     const controls=[...root.querySelectorAll<HTMLElement>(focusSelector)].filter(control=>{
-      const closed=control.closest('details:not([open])');return !control.matches(':disabled,[type="hidden"]')&&(!closed||control===closed.querySelector('summary'));
+      const closed=control.closest('details:not([open])');return control.tabIndex>=0&&!control.matches(':disabled,[type="hidden"]')&&(!closed||control===closed.querySelector('summary'));
     });
     const index=controls.indexOf(event.target as HTMLElement);tabTargetId=controls[index+(event.shiftKey?-1:1)]?.id;
     window.setTimeout(()=>{tabTargetId=undefined;},0);
@@ -102,7 +117,7 @@ function sourceText(doc:WorkspaceDocument,findings:WelfareFinding[],start:number
   const source=node('pre','document-text');source.setAttribute('aria-label','原文內容');let cursor=start;
   for(const f of findings){
     source.append(document.createTextNode(doc.document.text.slice(cursor,f.start)));
-    const mark=node('mark',f.reviewed?'reviewed':'',doc.document.text.slice(f.start,f.end));mark.tabIndex=0;mark.setAttribute('role','button');
+    const mark=node('mark',`tone-${toneOf(f)}${f.reviewed?' reviewed':''}`,doc.document.text.slice(f.start,f.end));mark.tabIndex=0;mark.setAttribute('role','button');
     // Metadata never introduces text nodes: manual selection offsets depend on Range.toString().
     mark.setAttribute('aria-label',`${f.category}，${f.reviewed?'已核對':'待核對'}，${f.original}；定位核對項目`);
     mark.onclick=()=>{if(window.getSelection()?.isCollapsed!==false)locate(f.id);};mark.onkeydown=event=>{if(!event.isComposing&&(event.key==='Enter'||event.key===' ')){event.preventDefault();locate(f.id);}};
@@ -110,19 +125,40 @@ function sourceText(doc:WorkspaceDocument,findings:WelfareFinding[],start:number
   }source.append(document.createTextNode(doc.document.text.slice(cursor,end)));return source;
 }
 
+/** Processed text with each replacement shown as a token in its category colour; same text as the export. */
+function processedText(doc:WorkspaceDocument,findings:WelfareFinding[],start:number,end:number):HTMLElement {
+  const out=node('pre','document-text result-text');out.setAttribute('aria-label','處理後文字');
+  const text=doc.document.text.slice(start,end);const relative=findings.map(f=>({...f,start:f.start-start,end:f.end-start}));
+  let edits;try{edits=findingsToEdits(text,relative);}catch(error){out.textContent=error instanceof Error?`請修正設定後再預覽：${error.message}`:'請修正處理設定';return out;}
+  const byStart=new Map(relative.filter(f=>f.action!=='keep').map(f=>[f.start,f]));let cursor=0;
+  for(const edit of edits){
+    out.append(document.createTextNode(text.slice(cursor,edit.start)));
+    const f=byStart.get(edit.start);
+    out.append(node('span',`token tone-${f?toneOf(f):'other'}${f?.action==='generalize'?' generalized':''}`,edit.replacement));cursor=edit.end;
+  }
+  out.append(document.createTextNode(text.slice(cursor)));return out;
+}
+
 function reviewToolbar(ui:ReviewUI,start:number,end:number):HTMLElement {
-  const {doc,refresh,locate}=ui;const state=reviewState(doc);const page=reviewPage(doc,start,end);
+  const {doc,refresh}=ui;const state=reviewState(doc);const page=reviewPage(doc,start,end);
   const toolbar=card();toolbar.classList.add('review-toolbar');toolbar.dataset.reviewKeyboard='';toolbar.tabIndex=0;toolbar.id='review-toolbar';toolbar.setAttribute('aria-label','覆核工具列');
-  toolbar.append(node('h2','',`剩餘 ${page.pending} 項待核對`),node('p','muted',`目前文件全文 ${page.total} 項。篩選與分批不會減少匯出前需核對的項目。`));
+  toolbar.classList.add('review-quickbar');
+  const done=page.total-page.pending;const progress=node('div','review-progress');
+  const meter=node('div','progress-meter');meter.setAttribute('role','progressbar');meter.setAttribute('aria-label','核對進度');
+  meter.setAttribute('aria-valuemin','0');meter.setAttribute('aria-valuemax',String(page.total));meter.setAttribute('aria-valuenow',String(done));
+  const fill=node('span','progress-fill');fill.style.width=`${page.total?Math.round(done/page.total*100):100}%`;meter.append(fill);
+  progress.append(node('h2','',page.pending?`剩餘 ${page.pending} 項待核對`:'全部項目已核對'),meter,node('p','muted',`全文 ${page.total} 項 · 篩選與分批不會減少匯出前需核對的項目`));
+  toolbar.append(progress);
   const filter=select([{value:'all',label:'全部項目'},{value:'pending',label:'未核對項目'}],state.filter);filter.id='review-filter';filter.setAttribute('aria-label','核對項目篩選');
-  filter.onchange=()=>{state.filter=filter.value as 'all'|'pending';state.page=0;refresh('review-filter');};toolbar.append(field('顯示核對項目',filter));
-  const actions=node('div','action-row');
-  actions.append(button('上一項',()=>moveFinding(ui,start,end,-1)),button('下一項',()=>moveFinding(ui,start,end,1)),button('下一個未核對項',()=>{
-    const pending=page.scoped.filter(f=>!f.reviewed);const index=doc.findings.findIndex(f=>f.id===state.selectedId);
-    const target=pending.find(f=>doc.findings.indexOf(f)>index)??pending[0];if(target)locate(target.id);else ui.ctx.notify('本範圍已沒有未核對項目，請確認全文剩餘數。');
-  }));
+  filter.onchange=()=>{state.filter=filter.value as 'all'|'pending';state.page=0;refresh('review-filter');};
+  const actions=node('div','action-row');actions.append(filter);
+  actions.append(button('上一項',()=>moveFinding(ui,start,end,-1)),button('下一項',()=>moveFinding(ui,start,end,1)),button('下一個未核對項',()=>nextPending(ui,start,end)));
   const undo=button('復原最近操作',()=>{undoReview(doc);refresh('review-undo');});undo.id='review-undo';undo.disabled=!doc.reviewHistory?.length;actions.append(undo);toolbar.append(actions);
-  toolbar.append(node('p','keyboard-help','工具列或項目內：↑ 上一項、↓ 下一項、R 切換核對、Ctrl／⌘ + Z 復原。輸入欄位與選單保留正常鍵盤操作。'));return toolbar;
+  toolbar.append(node('p','keyboard-help','快捷鍵（工具列或項目內）：↑ 上一項、↓ 下一項、R 切換核對、Ctrl／⌘ + Z 復原。輸入欄位與選單保留正常鍵盤操作。'));return toolbar;
+}
+function nextPending(ui:ReviewUI,start:number,end:number):void {
+  const {doc,locate}=ui;const state=reviewState(doc);const pending=reviewPage(doc,start,end).scoped.filter(f=>!f.reviewed);const index=doc.findings.findIndex(f=>f.id===state.selectedId);
+  const target=pending.find(f=>doc.findings.indexOf(f)>index)??pending[0];if(target)locate(target.id);else ui.ctx.notify('本範圍已沒有未核對項目，請確認全文剩餘數。');
 }
 function moveFinding(ui:ReviewUI,start:number,end:number,direction:number):void {
   const list=reviewPage(ui.doc,start,end).filtered;const selected=reviewState(ui.doc).selectedId;
@@ -142,8 +178,15 @@ function handleShortcut(event:KeyboardEvent,ui:ReviewUI,start:number,end:number)
 function manualEditor(ui:ReviewUI,source:HTMLElement,startOffset:number):HTMLElement {
   const {doc,attempt}=ui;const manual=card('補上自動辨識遺漏的內容');
   const value=input('','輸入原文中的完整字詞，或在上方原文反白選取');value.setAttribute('aria-label','要遮罩的原文');value.id='review-manual-value';
-  const category=input('人工標記','標記類別');category.id='review-manual-category';
-  manual.append(field('要遮罩的原文',value),field('類別',category));const actions=node('div','action-row');
+  const category=input(manualCategory.get(doc)??'姓名','標記類別');category.id='review-manual-category';
+  category.onchange=()=>{manualCategory.set(doc,category.value.trim()||'人工標記');};
+  const chips=node('div','category-chips');chips.setAttribute('role','group');chips.setAttribute('aria-label','常用類別');
+  for(const name of MANUAL_CATEGORIES){
+    const chip=button(name,()=>{category.value=name;manualCategory.set(doc,name);chips.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===chip)));},'button chip');
+    chip.setAttribute('aria-pressed',String(category.value===name));chips.append(chip);
+  }
+  manual.append(node('p','muted','選對類別，送給 AI 時才分得出人名、疾病或地點。同一個人建議回「人物與規則」加入別名，才會使用一致的代號。'));
+  manual.append(field('要遮罩的原文',value),field('類別',category),chips);const actions=node('div','action-row');
   actions.append(button('標記全部相同文字',()=>attempt(()=>{
     const term=value.value;if(!term.trim())throw new Error('請輸入要標記的原文');let at=0;const ranges:{start:number;end:number}[]=[];
     while((at=doc.document.text.indexOf(term,at))>=0){if(!doc.findings.some(f=>at<f.end&&at+term.length>f.start))ranges.push({start:at,end:at+term.length});at+=term.length;}
@@ -165,17 +208,33 @@ function columnEditor(ui:ReviewUI):HTMLElement {
 }
 
 function findingEditor(ui:ReviewUI,f:WelfareFinding):HTMLElement {
-  const {doc,attempt,refresh}=ui;const row=node('div','finding');row.id=rowId(f.id);row.dataset.findingId=f.id;row.tabIndex=-1;
+  const {doc,attempt,refresh}=ui;const row=node('div',`finding tone-${toneOf(f)}${f.reviewed?' is-reviewed':''}`);row.id=rowId(f.id);row.dataset.findingId=f.id;row.tabIndex=-1;
   row.setAttribute('aria-label',`全文第 ${doc.findings.indexOf(f)+1} 項，${f.category}，${f.reviewed?'已核對':'待核對'}`);row.addEventListener('focusin',()=>{reviewState(doc).selectedId=f.id;});
-  const excerpt=node('div','finding-value');excerpt.append(node('strong','',f.original),pill({rule:'規則建議',person:f.personId?'已確認人物':'姓名候選',manual:'人工標記',field:'人工欄位'}[f.source]),node('span',`review-status ${f.reviewed?'done':''}`,f.reviewed?'已核對':'待核對'),node('small','muted',f.message??''));
+  const excerpt=node('div','finding-value');excerpt.append(node('strong','',f.original),pill({rule:'規則建議',person:f.personId?'已確認人物':'姓名候選',manual:'人工標記',field:'人工欄位'}[f.source]),node('span',`review-status ${f.reviewed?'done':''}`,f.reviewed?'已核對':'待核對'),node('small','muted',(f.message??'').replace(REVIEW_NOTICE,'').trim()));
   const category=input(f.category);category.id=`category-${f.id}`;category.maxLength=40;category.setAttribute('aria-label','標記分類');category.onchange=()=>attempt(()=>changeFinding(doc,f.id,{category:category.value.trim()}),category.id);
-  const action=select(ACTIONS,f.action);action.id=`action-${f.id}`;action.setAttribute('aria-label',`${f.category}的處理方式`);action.onchange=()=>attempt(()=>changeFinding(doc,f.id,{action:action.value as FindingAction}),action.id);
-  row.append(excerpt,field('分類',category),field('處理方式',action));
+  const categoryField=field('分類',category);categoryField.classList.add('cell-category');
+  row.append(excerpt,categoryField,actionChoice(ui,f));
   if(f.action==='generalize'){
-    const general=input(f.generalized??'','請輸入不會辨識個案的概括內容');general.id=`general-${f.id}`;general.setAttribute('aria-label','概括內容');general.onchange=()=>attempt(()=>changeFinding(doc,f.id,{generalized:general.value}),general.id);row.append(field('概括內容',general));
+    const general=input(f.generalized??'','請輸入不會辨識個案的概括內容');general.id=`general-${f.id}`;general.setAttribute('aria-label','概括內容');general.onchange=()=>attempt(()=>changeFinding(doc,f.id,{generalized:general.value}),general.id);const generalField=field('概括內容',general);generalField.classList.add('cell-general');row.append(generalField);
   }else row.append(node('code','replacement',f.action==='keep'?'原文保留':f.replacement));
   row.append(checkbox('已核對',f.reviewed,checked=>{setReviewed(doc,[f.id],checked);refresh(`checked-${f.id}`);}));row.lastElementChild!.querySelector('input')!.id=`checked-${f.id}`;
   row.append(batchEditor(ui,f));return row;
+}
+/** Mask / generalize / keep as one radio group: one press instead of opening a menu. */
+function actionChoice(ui:ReviewUI,f:WelfareFinding):HTMLElement {
+  const wrap=node('div','field cell-action');wrap.append(node('span','field-label','處理方式'));
+  const group=node('div','segmented');group.setAttribute('role','radiogroup');group.setAttribute('aria-label',`${f.category}的處理方式`);group.id=`action-${f.id}`;
+  const options=ACTIONS;
+  const choose=(value:string)=>{if(value!==f.action)ui.attempt(()=>changeFinding(ui.doc,f.id,{action:value as FindingAction}),`action-${f.id}-${value}`);};
+  for(const option of options){
+    const b=button(option.label,()=>choose(option.value),'segment');b.id=`action-${f.id}-${option.value}`;
+    b.setAttribute('role','radio');b.setAttribute('aria-checked',String(f.action===option.value));b.tabIndex=f.action===option.value?0:-1;
+    b.onkeydown=event=>{
+      if(event.isComposing||!['ArrowLeft','ArrowRight'].includes(event.key))return;
+      event.preventDefault();event.stopPropagation();const i=options.indexOf(option),next=options[(i+(event.key==='ArrowRight'?1:options.length-1))%options.length];choose(next.value);
+    };group.append(b);
+  }
+  wrap.append(group);return wrap;
 }
 function batchEditor(ui:ReviewUI,f:WelfareFinding):HTMLElement {
   const details=node('details','batch-editor');details.append(node('summary','','同詞批次套用設定'));

@@ -4,11 +4,58 @@ import type { TextEdit } from '../core/types';
 import type { DetectionConfig, Person, WelfareFinding } from './types';
 import { PERSON_ROLES } from './policies';
 import { detectLocalIdentifiers } from './local-identifiers';
+import { proposeNarrativeNames, shortNameVariants } from './narrative';
 
 const NOTICE = '規則建議，請逐項覆核；無法保證已找出所有敏感資訊。';
+/** Appended to every rule message; the review list shows it once instead of on every row. */
+export const REVIEW_NOTICE = NOTICE;
 const CONTEXTS = new Set(['健康資訊', '保護資訊', '經濟資訊', '職業', '日期', '年齡', '金額']);
 const LABELS = '個案姓名|服務對象|主要照顧者|監護人|通報人|案主|案父|案母|社工|督導|姓名|暱稱|綽號';
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const HEALTH_TERMS = new RegExp([
+  '思覺失調症', '重度憂鬱症', '憂鬱症', '躁鬱症', '雙相情緒障礙', '焦慮症', '恐慌症', '強迫症', '創傷後壓力症候群', '自閉症', '亞斯伯格症',
+  '注意力不足過動症', '過動症', '智能障礙', '發展遲緩', '唐氏症', '腦性麻痺', '失智症', '帕金森氏症', '中風', '糖尿病', '高血壓', '心臟病',
+  '腎衰竭', '洗腎', '癌症', '肝硬化', '肝炎', '結核病', '愛滋病', '酒癮', '毒癮', '藥癮', '自殺未遂', '自傷行為',
+].join('|'), 'gu');
+const PLACE_SUFFIX = /國民小學|國民中學|實驗小學|高級中學|國小|國中|高中|高職|小學|大學|醫院|療養院|診所|養護中心|安養中心|護理之家|安置中心|基金會|協會|庇護工場|托兒所|幼兒園|[村里](?:\d{1,3}鄰)?/gu;
+/** Verbs and particles that end the lead-in before a place name (就讀、居住於、到). */
+const PLACE_LEAD = /就讀於|就讀|轉學到|轉學至|轉到|轉入|考上|升上|進入|居住在|居住於|居住|住在|住於|搬到|搬至|位於|前往|來自|陪同|在|於|到|至|往|從|自|的|讀|念|唸|去|與|和|及|或/gu;
+const NUMERAL = /[0-9０-９一二兩三四五六七八九十百千萬]/u;
+
+/**
+ * Where the place name starts inside the Han run before its suffix, or undefined when the run is only
+ * narrative (「就讀大學」 has no proper name). A one-character particle at the very start may belong to
+ * the name itself (「自強國小」), so it is skipped when it would leave fewer than two characters.
+ */
+function placeNameStart(run: string): number | undefined {
+  const leads = [...run.matchAll(PLACE_LEAD)].map(m => ({ end: m.index! + m[0].length, multi: m[0].length > 1 }));
+  for (const end of [...new Set(leads.map(l => l.end))].sort((a, b) => b - a)) {
+    if (run.length - end >= 2) return end;
+    if (leads.some(l => l.end === end && l.multi)) return undefined;
+  }
+  return run.length >= 2 ? 0 : undefined;
+}
+
+/** Proper place names before a suffix, without the preceding narrative. */
+function findPlaceNames(text: string): { start: number; end: number; category: '機構' | '村里' }[] {
+  const out: { start: number; end: number; category: '機構' | '村里' }[] = [];
+  let previousEnd = 0;
+  for (const m of text.matchAll(PLACE_SUFFIX)) {
+    const village = /^[村里]/u.test(m[0]), max = village ? 6 : 15;
+    // Never reach back into an earlier place: 「自強國小與台大醫院」 is two names.
+    let begin = m.index!;
+    while (begin > previousEnd && m.index! - begin < max && /\p{Script=Han}/u.test(text[begin - 1])) begin--;
+    previousEnd = m.index! + m[0].length;
+    const lead = placeNameStart(text.slice(begin, m.index!));
+    if (lead === undefined) continue;
+    const name = text.slice(begin + lead, m.index!);
+    if (name.length < 2 || (village ? name.length > 4 : name.length > 12)) continue;
+    // 「五公里」「家里」 are distances or typos, not villages.
+    if (village && (NUMERAL.test(name) || /[公英海千萬鄰家這那哪心]$/u.test(name))) continue;
+    out.push({ start: begin + lead, end: m.index! + m[0].length, category: village ? '村里' : '機構' });
+  }
+  return out;
+}
 const intersects = (a: { start: number; end: number }, b: { start: number; end: number }) => a.start < b.end && b.start < a.end;
 type Candidate = WelfareFinding & { priority: number; context?: boolean };
 
@@ -35,6 +82,10 @@ export function proposePeople(text: string, groupId: string): Person[] {
   }
   const inline = new RegExp(`(?:${LABELS})([\\p{Script=Han}]{2,4})(?=先生|女士|同學)`, 'gu');
   for (const m of text.matchAll(inline)) if (!result.some(p => p.name === m[1])) result.push({ id: `candidate-${result.length + 1}`, groupId, name: m[1], aliases: [], role: '待確認', confirmed: false });
+  // Narrative notes rarely label names: 「案母張王美珠」「班導陳老師」. Skip names already covered by a longer labeled proposal.
+  for (const name of proposeNarrativeNames(text)) {
+    if (!result.some(p => p.name === name || p.name.includes(name))) result.push({ id: `candidate-${result.length + 1}`, groupId, name, aliases: [], role: '待確認', confirmed: false });
+  }
   return result;
 }
 
@@ -42,6 +93,17 @@ function suffix(index: number): string {
   let value = index + 1, out = '';
   while (value > 0) { value--; out = String.fromCharCode(65 + value % 26) + out; value = Math.floor(value / 26); }
   return out;
+}
+
+const ageBand = (age: number) => age < 6 ? '0–5歲' : age < 12 ? '6–11歲' : age < 18 ? '12–17歲' : age < 20 ? '18–19歲' : `${Math.floor(age / 10) * 10}–${Math.floor(age / 10) * 10 + 9}歲`;
+const DIGITS: Record<string, number> = { 零: 0, 一: 1, 二: 2, 兩: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+/** 三十五 → 35, 十二 → 12, 一百零五 → 105; undefined for anything else. */
+export function chineseNumber(s: string): number | undefined {
+  const m = s.match(/^(?:([一二兩三四五六七八九])?百)?(?:零)?(?:([一二兩三四五六七八九])?(十))?([一二兩三四五六七八九])?$/u);
+  if (!m || !s) return undefined;
+  const hundreds = s.includes('百') ? DIGITS[m[1] ?? '一'] : 0;
+  const tens = m[3] ? DIGITS[m[2] ?? '一'] : 0;
+  return hundreds * 100 + tens * 10 + (m[4] ? DIGITS[m[4]] : 0);
 }
 
 export function detectWelfare(text: string, config: DetectionConfig): WelfareFinding[] {
@@ -80,11 +142,12 @@ export function detectWelfare(text: string, config: DetectionConfig): WelfareFin
     ['健康狀況|醫療資訊|診斷|病史|身心狀況', '健康資訊'], ['保護事項|保護資訊|受暴情形|家暴情形|性侵情形', '保護資訊'], ['經濟狀況|經濟資訊|債務情形', '經濟資訊'],
   ];
   for (const [label, category] of ordinaryFields) scan(new RegExp(`(?:${label})[\\t ]*[:：][\\t ]*([^，,；;。\\r\\n\\t]{1,160})`, 'gu'), category, CONTEXTS.has(category) ? 10 : 70, true);
-  scan(/(?<![\p{Script=Han}])(?:[\p{Script=Han}]{2,15})(?:國民小學|國民中學|國小|國中|高中|大學|醫院|療養院|養護中心|安置中心|基金會|庇護工場)/gu, '機構', 60);
-  scan(/(?<![\p{Script=Han}])[\p{Script=Han}]{2,5}[村里](?:\d{1,3}鄰)?/gu, '村里', 55);
-  scan(/思覺失調症|重度憂鬱症|憂鬱症|躁鬱症|愛滋病|自殺未遂|自傷行為/gu, '健康資訊', 9);
-  scan(/性侵害|遭受家暴|遭家暴|遭性侵|遭同住者施暴/gu, '保護資訊', 9);
-  scan(/積欠房租|無力償還債務/gu, '經濟資訊', 9);
+  // Proper names right before a place suffix. The name stops at the verb or particle before it, so
+  // 「目前就讀文山國小」 masks only 「文山國小」 and keeps the narrative.
+  for (const place of findPlaceNames(text)) add(place.start, place.end, place.category, place.category === '機構' ? 60 : 55);
+  scan(HEALTH_TERMS, '健康資訊', 9);
+  scan(/性侵害|遭受家暴|遭家暴|遭性侵|遭同住者施暴|性騷擾|兒虐|保護令/gu, '保護資訊', 9);
+  scan(/積欠房租|無力償還債務|中低收入戶|低收入戶|卡債/gu, '經濟資訊', 9);
   for (const rule of config.customRules ?? []) {
     checkLabel(rule.label);
     if (typeof rule.prefix !== 'string' || rule.prefix.length < 1 || rule.prefix.length > 64 || !/^[\p{L}\p{N} ._/-]+$/u.test(rule.prefix)
@@ -99,7 +162,8 @@ export function detectWelfare(text: string, config: DetectionConfig): WelfareFin
     ids.add(p.id);
     let replacement = '[姓名]';
     if (p.confirmed) {
-      const role = PERSON_ROLES.includes(p.role) ? p.role : '人物';
+      // A confirmed person whose role is still 待確認 reads as a neutral [人物A], not [待確認A].
+      const role = PERSON_ROLES.includes(p.role) && p.role !== '待確認' ? p.role : '人物';
       const index = roles.get(role) ?? 0; roles.set(role, index + 1); replacement = marker(`${role}${suffix(index)}`);
     }
     for (const name of new Set([p.name, ...p.aliases])) {
@@ -121,6 +185,18 @@ export function detectWelfare(text: string, config: DetectionConfig): WelfareFin
         message: ambiguous ? `姓名或別名歧義：同一文字對應多位人物，包含尚未確認的候選。${NOTICE}` : NOTICE });
     }
   }
+  // Short forms of known names (張志明 → 志明、阿明). Masked generically and never linked to a person:
+  // linking requires the person to add the alias in 「人物與規則」.
+  const variants = new Map<string, string[]>();
+  for (const name of names.keys()) for (const v of shortNameVariants(name)) if (!names.has(v)) variants.set(v, [...(variants.get(v) ?? []), name]);
+  for (const [variant, fulls] of variants) {
+    let from = 0;
+    for (;;) {
+      const start = text.indexOf(variant, from); if (start === -1) break; from = start + variant.length;
+      add(start, from, '姓名', 85, { source: 'person', replacement: '[姓名]',
+        message: `可能是「${fulls.join('」或「')}」的簡稱或小名；如為同一人，請在「人物與規則」加入別名。${NOTICE}` });
+    }
+  }
   for (const m of text.matchAll(/(?<!\d)(?:(民國)[\t ]*)?(\d{2,4})[\t ]*(?:年|[-/.])[\t ]*(\d{1,2})[\t ]*(?:月|[-/.])[\t ]*(\d{1,2})(?:[\t ]*日)?(?!\d)/gu)) {
     // An explicit ROC prefix takes precedence; otherwise four digits denote CE,
     // and the supported two/three-digit local date forms denote ROC.
@@ -135,8 +211,35 @@ export function detectWelfare(text: string, config: DetectionConfig): WelfareFin
   }
   for (const m of text.matchAll(/(?<!\d)(\d{1,3})歲(?!\d)/gu)) {
     const age = Number(m[1]); if (age > 120) continue;
-    const band = age < 6 ? '0–5歲' : age < 12 ? '6–11歲' : age < 18 ? '12–17歲' : age < 20 ? '18–19歲' : `${Math.floor(age / 10) * 10}–${Math.floor(age / 10) * 10 + 9}歲`;
-    add(m.index!, m.index! + m[0].length, '年齡', 30, { generalized: band });
+    add(m.index!, m.index! + m[0].length, '年齡', 30, { generalized: ageBand(age) });
+  }
+  const dateAction = config.purpose === 'public' ? 'generalize' : config.purpose === 'internal' ? 'keep' : 'mask';
+  const tenDays = (day: number) => day <= 10 ? '上旬' : day <= 20 ? '中旬' : '下旬';
+  const validDay = (month: number, day: number) => month >= 1 && month <= 12 && day >= 1 && day <= [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  // Year and month without a day: 113年5月.
+  for (const m of text.matchAll(/(?<!\d)(?:(民國)[\t ]*)?(\d{2,4})[\t ]*年[\t ]*(\d{1,2})[\t ]*月(?![\t ]*(?:\d|[上中下]旬))/gu)) {
+    const roc = m[1] !== undefined || m[2].length < 4, year = Number(m[2]), month = Number(m[3]);
+    if (year < 1 || month < 1 || month > 12) continue;
+    add(m.index!, m.index! + m[0].length, '日期', 30, { generalized: `${roc ? '民國' : ''}${year}年${month <= 6 ? '上半年' : '下半年'}`, action: dateAction });
+  }
+  // Month and day without a year: 5月12日、5/12.
+  for (const m of text.matchAll(/(?<!年[\t ]*)(?<!\d)(\d{1,2})[\t ]*月[\t ]*(\d{1,2})[\t ]*[日號](?!\d)/gu)) {
+    const month = Number(m[1]), day = Number(m[2]); if (!validDay(month, day)) continue;
+    add(m.index!, m.index! + m[0].length, '日期', 30, { generalized: `${month}月${tenDays(day)}`, action: dateAction });
+  }
+  for (const m of text.matchAll(/(?<=^|[於在至到自從約與和及、，,。；;\s（(])(\d{1,2})[/／](\d{1,2})(?![\d/／%])(?!的|之)/gu)) {
+    const month = Number(m[1]), day = Number(m[2]); if (!validDay(month, day)) continue;
+    add(m.index!, m.index! + m[0].length, '日期', 30, { generalized: `${month}月${tenDays(day)}`, action: dateAction });
+  }
+  // Ages in Chinese numerals (三十五歲) and school grades (三年級), which reveal a child's age.
+  for (const m of text.matchAll(/(?<![一二兩三四五六七八九十百零])([一二兩三四五六七八九十百零]{1,5})歲/gu)) {
+    const age = chineseNumber(m[1]); if (age === undefined || age > 120) continue;
+    add(m.index!, m.index! + m[0].length, '年齡', 30, { generalized: ageBand(age) });
+  }
+  for (const m of text.matchAll(/(?<![一二三四五六0-9])([一二三四五六1-6])[\t ]*年級/gu)) {
+    const grade = '一二三四五六'.indexOf(m[1]) + 1 || Number(m[1]);
+    const secondary = /(?:國中|高中|高職|國民中學|高級中學)[\t ]*$/u.test(text.slice(Math.max(0, m.index! - 6), m.index!));
+    add(m.index!, m.index! + m[0].length, '年齡', 30, { generalized: secondary ? '在學' : grade <= 2 ? '低年級' : grade <= 4 ? '中年級' : '高年級' });
   }
   for (const m of text.matchAll(/(?:新[臺台]幣\s*)?(\d{1,3}(?:,\d{3})+|\d{2,9})\s*元/gu)) {
     const n = Number(m[1].replaceAll(',', '')), unit = n < 10000 ? 1000 : n < 100000 ? 10000 : 100000, low = Math.floor(n / unit) * unit;

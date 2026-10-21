@@ -9,6 +9,7 @@ function setup(text='電話0912345678；電話0912345678；住在藍色小屋。
 }
 function click(host:HTMLElement,text:string){const b=[...host.querySelectorAll<HTMLButtonElement>('button')].find(b=>b.textContent===text);expect(b,`button ${text}`).toBeDefined();b!.click();}
 function change(el:HTMLInputElement|HTMLSelectElement,value:string){el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}));}
+function choose(host:HTMLElement,id:string,action:string){const b=host.querySelector<HTMLButtonElement>(`[data-finding-id="${id}"] [role="radio"][id$="-${action}"]`);expect(b,`action ${action}`).toBeTruthy();b!.click();}
 function row(host:HTMLElement,id:string){return host.querySelector<HTMLElement>(`[data-finding-id="${id}"]`)!;}
 function check(host:HTMLElement,text:string){const label=[...host.querySelectorAll('label')].find(l=>l.textContent?.includes(text))!;const box=label.querySelector('input')!;box.checked=true;box.dispatchEvent(new Event('change',{bubbles:true}));}
 
@@ -18,7 +19,8 @@ describe('review efficiency and safety',()=>{
   it('counts the full document while filtering and paging only a bounded set of editors',()=>{
     const {host,app,doc}=setup(Array.from({length:75},()=> '電話0912345678').join('；'));
     expect(host.textContent).toContain('剩餘 75 項待核對');expect(host.querySelectorAll('[data-finding-id]').length).toBeLessThanOrEqual(30);
-    click(host,'核對本批顯示的項目');expect(doc.findings.filter(f=>f.reviewed)).toHaveLength(30);
+    click(host,'核對本批顯示的項目');expect(doc.findings.filter(f=>f.reviewed)).toHaveLength(0);expect(host.textContent).toContain('將 30 項標為已核對');
+    click(host,'確認核對這 30 項');expect(doc.findings.filter(f=>f.reviewed)).toHaveLength(30);
     expect(host.textContent).toContain('剩餘 45 項待核對');
     change(host.querySelector<HTMLSelectElement>('[aria-label="核對項目篩選"]')!,'pending');
     expect(host.querySelectorAll('[data-finding-id]')).toHaveLength(30);expect(host.textContent).toContain('全文 75 項');
@@ -59,14 +61,14 @@ describe('review efficiency and safety',()=>{
   });
   it('undoes category and single-item handling without restoring full review permission',()=>{
     const {host,doc}=setup();doc.findings.forEach(f=>f.reviewed=true);doc.reviewConfirmed=true;
-    const f=doc.findings[0];change(row(host,f.id).querySelector<HTMLSelectElement>('[aria-label$="的處理方式"]')!,'keep');
+    const f=doc.findings[0];choose(host,f.id,'keep');
     expect(doc.reviewConfirmed).toBe(false);click(host,'復原最近操作');const restored=doc.findings[0];expect(restored.action).toBe('mask');expect(restored.reviewed).toBe(false);expect(doc.reviewConfirmed).toBe(false);
   });
   it('undoes manual additions and prevents undo after purpose, people, reanalysis or clear changes',()=>{
     const {host,app,doc}=setup();change(host.querySelector<HTMLInputElement>('[aria-label="要遮罩的原文"]')!,'藍色小屋');click(host,'標記全部相同文字');
     expect(doc.findings.some(f=>f.original==='藍色小屋')).toBe(true);click(host,'復原最近操作');expect(doc.findings.some(f=>f.original==='藍色小屋')).toBe(false);
     for(const invalidate of [()=>app.session.setPurpose('public'),()=>{app.session.people.push({id:'p',groupId:doc.groupId,name:'藍色小屋',aliases:[],role:'人物',confirmed:false});app.session.reanalyse(doc);}]){
-      change(row(host,doc.findings[0].id).querySelector<HTMLSelectElement>('[aria-label$="的處理方式"]')!,'keep');invalidate();app.render();expect([...host.querySelectorAll('button')].find(b=>b.textContent==='復原最近操作')?.disabled).toBe(true);
+      choose(host,doc.findings[0].id,'keep');invalidate();app.render();expect([...host.querySelectorAll('button')].find(b=>b.textContent==='復原最近操作')?.disabled).toBe(true);
     }
     app.clear();expect(app.session.documents).toHaveLength(0);app.addText('電話0912345678');app.go('review');expect([...host.querySelectorAll('button')].find(b=>b.textContent==='復原最近操作')?.disabled).toBe(true);
   });
@@ -99,7 +101,7 @@ describe('review efficiency and safety',()=>{
   });
   it('returns focus to the selected item when undo disables its own last-history button',()=>{
     const {host,doc}=setup();click(host,'下一項');click(host,'下一項');const id=doc.findings[1].id;
-    change(row(host,id).querySelector<HTMLSelectElement>('[aria-label$="的處理方式"]')!,'keep');click(host,'復原最近操作');
+    choose(host,id,'keep');click(host,'復原最近操作');
     expect([...host.querySelectorAll('button')].find(b=>b.textContent==='復原最近操作')?.disabled).toBe(true);expect(document.activeElement).toBe(row(host,id));
   });
   it('restores the next control after native Tab finishes a change-triggered redraw without cancelling Tab',async()=>{
@@ -108,18 +110,18 @@ describe('review efficiency and safety',()=>{
     change(category,'聯絡資訊');
     // Native sequential focus navigation completes after change, when the old control has been removed.
     (document.activeElement as HTMLElement).blur();await Promise.resolve();
-    expect(document.activeElement).toBe(row(host,id).querySelector('[aria-label="聯絡資訊的處理方式"]'));
+    expect(document.activeElement).toBe(row(host,id).querySelector('[aria-label="聯絡資訊的處理方式"] [aria-checked="true"]'));
   });
   it('recovers focus after browser Tab completion following the microtask checkpoint',async()=>{
     const frames:FrameRequestCallback[]=[];vi.spyOn(window,'requestAnimationFrame').mockImplementation(callback=>{frames.push(callback);return frames.length;});
     const {host,doc}=setup();const id=doc.findings[0].id;const category=row(host,id).querySelector<HTMLInputElement>('[aria-label="標記分類"]')!;category.focus();
     category.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true}));change(category,'聯絡資訊');await Promise.resolve();
     (document.activeElement as HTMLElement).blur();for(const callback of frames.splice(0))callback(0);
-    expect(document.activeElement).toBe(row(host,id).querySelector('[aria-label="聯絡資訊的處理方式"]'));
+    expect(document.activeElement).toBe(row(host,id).querySelector('[aria-label="聯絡資訊的處理方式"] [aria-checked="true"]'));
   });
   it('keeps the native Tab destination until change fires after keydown microtasks with BODY focused',async()=>{
     const {host,doc}=setup();const id=doc.findings[0].id;const category=row(host,id).querySelector<HTMLInputElement>('[aria-label="標記分類"]')!;category.focus();
     category.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true}));await Promise.resolve();category.blur();change(category,'聯絡資訊');
-    expect(document.activeElement).toBe(row(host,id).querySelector('[aria-label="聯絡資訊的處理方式"]'));
+    expect(document.activeElement).toBe(row(host,id).querySelector('[aria-label="聯絡資訊的處理方式"] [aria-checked="true"]'));
   });
 });
