@@ -1,7 +1,7 @@
 import type { DocumentKind, Purpose } from './types';
 export const PURPOSES: { id: Purpose; label: string; description: string }[] = [
-  { id: 'internal', label: '機構內部討論', description: '完整遮蔽直接識別資訊；敏感脈絡先保留並標示待覆核。' },
-  { id: 'ai', label: '外部 AI 協作', description: '遮蔽直接識別資訊及高風險脈絡，逐項決定保留或概化。' },
+  { id: 'internal', label: '機構內部討論', description: '服務對象直接識別資訊遮蔽；經確認的社工姓名、一般日期可保留，仍須人工覆核。' },
+  { id: 'ai', label: '外部 AI 協作', description: '服務對象個資遮蔽；一般服務日期與已確認的工作人員姓名建議保留，仍須覆核。' },
   { id: 'public', label: '公開分享', description: '日期提供年月旬序，年齡與金額提供概化建議；仍需人工覆核。' },
 ];
 export const DOCUMENT_KINDS: { id: DocumentKind; label: string }[] = [
