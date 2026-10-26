@@ -10,6 +10,7 @@ const NOTICE = '規則建議，請逐項覆核；無法保證已找出所有敏�
 /** Appended to every rule message; the review list shows it once instead of on every row. */
 export const REVIEW_NOTICE = NOTICE;
 const CONTEXTS = new Set(['健康資訊', '保護資訊', '經濟資訊', '職業', '日期', '年齡', '金額']);
+const STAFF_ROLES = new Set(['社工', '督導']);
 const LABELS = '個案姓名|服務對象|主要照顧者|監護人|通報人|案主|案父|案母|社工|督導|姓名|暱稱|綽號';
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const HEALTH_TERMS = new RegExp([
@@ -106,6 +107,12 @@ export function chineseNumber(s: string): number | undefined {
   return hundreds * 100 + tens * 10 + (m[4] ? DIGITS[m[4]] : 0);
 }
 
+/** A confirmed staff role cannot override an explicitly conflicting client label. */
+function staffNameHasClientConflict(text: string, name: string): boolean {
+  const labeledClient = new RegExp('(?:^|[\\s，,；;。])(?:案主|服務對象|個案(?:姓名)?|案父|案母|主要照顧者|監護人|家屬|通報人)[\\t ]*[:：]?[\\t ]*' + escapeRegex(name) + '(?![\\p{L}])', 'u');
+  return labeledClient.test(text);
+}
+
 export function detectWelfare(text: string, config: DetectionConfig): WelfareFinding[] {
   if (!['internal', 'ai', 'public'].includes(config.purpose)) throw new Error('用途無效');
   if ((config.customRules?.length ?? 0) > 50) throw new Error('機構規則數量超過上限');
@@ -181,8 +188,12 @@ export function detectWelfare(text: string, config: DetectionConfig): WelfareFin
       const start = text.indexOf(name, from); if (start === -1) break; from = start + name.length;
       if (/^[A-Za-z]/u.test(name) && /[A-Za-z]/u.test(text[start - 1] ?? '')) continue;
       if (/[A-Za-z]$/u.test(name) && /[A-Za-z]/u.test(text[from] ?? '')) continue;
+      const verifiedStaff = !!owner && STAFF_ROLES.has(owner.person.role) && !staffNameHasClientConflict(text, name);
       add(start, from, '姓名', 90, { source: 'person', replacement: owner?.replacement ?? '[姓名]', personId: owner?.person.id,
-        message: ambiguous ? `姓名或別名歧義：同一文字對應多位人物，包含尚未確認的候選。${NOTICE}` : NOTICE });
+        action: verifiedStaff ? 'keep' : 'mask',
+        message: ambiguous ? '姓名或別名歧義：同一文字對應多位人物，包含尚未確認的候選。' + NOTICE
+          : verifiedStaff ? '已確認的工作人員姓名，建議保留；仍須確認其並非本案服務對象，且目前分享目的允許揭露。' + NOTICE
+          : owner && STAFF_ROLES.has(owner.person.role) ? '同名可能指涉服務對象或家屬，為避免誤揭露先遮蔽。' + NOTICE : NOTICE });
     }
   }
   // Short forms of known names (張志明 → 志明、阿明). Masked generically and never linked to a person:
@@ -197,6 +208,20 @@ export function detectWelfare(text: string, config: DetectionConfig): WelfareFin
         message: `可能是「${fulls.join('」或「')}」的簡稱或小名；如為同一人，請在「人物與規則」加入別名。${NOTICE}` });
     }
   }
+  // Keep ordinary service dates to preserve intervention chronology. Birthdays
+  // and clearly sensitive incident dates remain conservative; public use is broader.
+  const datePolicy = (start: number): Pick<Candidate, 'action' | 'message'> => {
+    const clause = text.slice(Math.max(0, start - 35), start).split(/[。；;，,\r\n]/u).at(-1)?.trim() ?? '';
+    if (/(?:出生(?:年月日|年月|日期)?|生日|生年月日)[\t ]*[:：]?[\t ]*$/u.test(clause)) {
+      return { action: 'mask', message: '出生日期可能直接或間接辨識服務對象，預設遮蔽。' + NOTICE };
+    }
+    if (/(?:案發|事發|受暴|性侵|自殺|重大事故|保護令)(?:日期|時間)?[\t ]*[:：]?[\t ]*$/u.test(clause)) {
+      return { action: config.purpose === 'internal' ? 'keep' : 'mask',
+        message: '敏感事件的精確日期可能造成再識別，需逐項判斷。' + NOTICE };
+    }
+    return { action: config.purpose === 'public' ? 'generalize' : 'keep',
+      message: '一般服務日期預設保留（公開用途建議概化）；仍需確認日期與其他線索的組合識別風險。' + NOTICE };
+  };
   for (const m of text.matchAll(/(?<!\d)(?:(民國)[\t ]*)?(\d{2,4})[\t ]*(?:年|[-/.])[\t ]*(\d{1,2})[\t ]*(?:月|[-/.])[\t ]*(\d{1,2})(?:[\t ]*日)?(?!\d)/gu)) {
     // An explicit ROC prefix takes precedence; otherwise four digits denote CE,
     // and the supported two/three-digit local date forms denote ROC.
@@ -207,29 +232,28 @@ export function detectWelfare(text: string, config: DetectionConfig): WelfareFin
     date.setUTCFullYear(ceYear, month - 1, day);
     if (date.getUTCFullYear() !== ceYear || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) continue;
     const generalized = `${roc ? '民國' : ''}${year}年${month}月${day <= 10 ? '上旬' : day <= 20 ? '中旬' : '下旬'}`;
-    add(m.index!, m.index! + m[0].length, '日期', 30, { generalized, action: config.purpose === 'public' ? 'generalize' : config.purpose === 'internal' ? 'keep' : 'mask' });
+    add(m.index!, m.index! + m[0].length, '日期', 30, { generalized, ...datePolicy(m.index!) });
   }
   for (const m of text.matchAll(/(?<!\d)(\d{1,3})歲(?!\d)/gu)) {
     const age = Number(m[1]); if (age > 120) continue;
     add(m.index!, m.index! + m[0].length, '年齡', 30, { generalized: ageBand(age) });
   }
-  const dateAction = config.purpose === 'public' ? 'generalize' : config.purpose === 'internal' ? 'keep' : 'mask';
   const tenDays = (day: number) => day <= 10 ? '上旬' : day <= 20 ? '中旬' : '下旬';
   const validDay = (month: number, day: number) => month >= 1 && month <= 12 && day >= 1 && day <= [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
   // Year and month without a day: 113年5月.
   for (const m of text.matchAll(/(?<!\d)(?:(民國)[\t ]*)?(\d{2,4})[\t ]*年[\t ]*(\d{1,2})[\t ]*月(?![\t ]*(?:\d|[上中下]旬))/gu)) {
     const roc = m[1] !== undefined || m[2].length < 4, year = Number(m[2]), month = Number(m[3]);
     if (year < 1 || month < 1 || month > 12) continue;
-    add(m.index!, m.index! + m[0].length, '日期', 30, { generalized: `${roc ? '民國' : ''}${year}年${month <= 6 ? '上半年' : '下半年'}`, action: dateAction });
+    add(m.index!, m.index! + m[0].length, '日期', 30, { generalized: `${roc ? '民國' : ''}${year}年${month <= 6 ? '上半年' : '下半年'}`, ...datePolicy(m.index!) });
   }
   // Month and day without a year: 5月12日、5/12.
   for (const m of text.matchAll(/(?<!年[\t ]*)(?<!\d)(\d{1,2})[\t ]*月[\t ]*(\d{1,2})[\t ]*[日號](?!\d)/gu)) {
     const month = Number(m[1]), day = Number(m[2]); if (!validDay(month, day)) continue;
-    add(m.index!, m.index! + m[0].length, '日期', 30, { generalized: `${month}月${tenDays(day)}`, action: dateAction });
+    add(m.index!, m.index! + m[0].length, '日期', 30, { generalized: `${month}月${tenDays(day)}`, ...datePolicy(m.index!) });
   }
   for (const m of text.matchAll(/(?<=^|[於在至到自從約與和及、，,。；;\s（(])(\d{1,2})[/／](\d{1,2})(?![\d/／%])(?!的|之)/gu)) {
     const month = Number(m[1]), day = Number(m[2]); if (!validDay(month, day)) continue;
-    add(m.index!, m.index! + m[0].length, '日期', 30, { generalized: `${month}月${tenDays(day)}`, action: dateAction });
+    add(m.index!, m.index! + m[0].length, '日期', 30, { generalized: `${month}月${tenDays(day)}`, ...datePolicy(m.index!) });
   }
   // Ages in Chinese numerals (三十五歲) and school grades (三年級), which reveal a child's age.
   for (const m of text.matchAll(/(?<![一二兩三四五六七八九十百零])([一二兩三四五六七八九十百零]{1,5})歲/gu)) {
