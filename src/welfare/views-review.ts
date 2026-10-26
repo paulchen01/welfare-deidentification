@@ -5,7 +5,7 @@ import { findingsToEdits,REVIEW_NOTICE } from './engine';
 import { toneOf } from './ui-tones';
 import { documentPicker } from './views-input';
 import type { WelfareFinding,FindingAction } from './types';
-import { addManualRanges,applySameWord,changeFinding,confirmFullReview,previewSameWord,REVIEW_PAGE_SIZE,reviewPage,reviewState,setReviewed,undoReview,type SameWordPreview } from './review-actions';
+import { addManualRanges,applySameWord,changeFinding,changeMultipleFindings,confirmFullReview,previewSameWord,REVIEW_PAGE_SIZE,reviewPage,reviewState,setReviewed,undoReview,type SameWordPreview } from './review-actions';
 
 const ACTIONS=[{value:'mask',label:'遮罩'},{value:'generalize',label:'概括'},{value:'keep',label:'保留原文'}];
 interface ReviewUI {
@@ -20,6 +20,7 @@ const MANUAL_CATEGORIES=['姓名','健康資訊','機構','地點','日期','職
 // Memory-only UI state per document: last manual category and a pending batch confirmation.
 const manualCategory=new WeakMap<WorkspaceDocument,string>();
 const pendingBatch=new WeakMap<WorkspaceDocument,string[]>();
+const pendingMulti=new WeakMap<WorkspaceDocument,{ids:string[];action:FindingAction;revision:number}>();
 
 export function reviewView(ctx:UIContext):HTMLElement {
   const root=node('div','view wide review-view');root.append(title('03 / 人工覆核','逐處判斷，再讀一次全文。','自動辨識可能漏掉關係、事件與少見名稱。檢查遮罩結果是否仍能辨識個案，並手動標記遺漏處。'));
@@ -63,6 +64,7 @@ export function reviewView(ctx:UIContext):HTMLElement {
   const findings=card(`本範圍核對項目 · ${page.scoped.filter(f=>f.reviewed).length} / ${page.scoped.length}（全文 ${page.total} 項）`);
   findings.id='review-findings';findings.dataset.reviewKeyboard='';findings.tabIndex=-1;
   findings.append(node('p','review-page-summary',`第 ${state.page+1} / ${page.pages} 批，顯示 ${page.shown.length} 項；篩選後 ${page.filtered.length} 項。每批最多 ${REVIEW_PAGE_SIZE} 項。`),node('p','muted',REVIEW_NOTICE));
+  findings.append(bulkSelectionEditor(ui,page));
   if(!page.shown.length)findings.append(node('p','empty','目前篩選範圍沒有項目。這不代表已無個資，請檢查全文。'));
   for(const f of page.shown)findings.append(findingEditor(ui,f));
   const paging=node('div','action-row');
@@ -207,9 +209,72 @@ function columnEditor(ui:ReviewUI):HTMLElement {
   },'review-column')));return columns;
 }
 
+/** Batch selection changes no data and never marks a finding as reviewed. */
+function bulkSelectionEditor(ui:ReviewUI,page:ReturnType<typeof reviewPage>):HTMLElement {
+  const {doc,refresh,attempt}=ui,state=reviewState(doc);
+  const live=new Set(doc.findings.map(f=>f.id));
+  const selected=(state.selectedIds??[]).filter(id=>live.has(id));
+  state.selectedIds=selected;
+  const panel=node('div','bulk-selection');
+  const header=node('div','action-row');
+  header.append(node('strong','','已選 '+selected.length+' 項'),
+    node('span','muted','可全選本批或本範圍；選取不代表完成核對'));
+  panel.append(header);
+  const choose=(ids:string[],merge=false)=>{
+    state.selectedIds=[...new Set(merge?[...selected,...ids]:ids)];
+    pendingMulti.delete(doc);refresh('review-bulk-selection');
+  };
+  const controls=node('div','action-row');controls.id='review-bulk-selection';
+  controls.append(
+    button('全選本批',()=>choose(page.shown.map(f=>f.id),true),'button secondary'),
+    button('全選本範圍',()=>choose(page.scoped.map(f=>f.id)),'button secondary'),
+    button('只選未核對',()=>choose(page.scoped.filter(f=>!f.reviewed).map(f=>f.id)),'button secondary'),
+    button('取消全選',()=>choose([]),'button text-button'));
+  const categories=[...new Set(page.scoped.map(f=>f.category))];
+  if(categories.length){
+    const category=select(categories.map(value=>({value,label:value})),categories[0]);
+    category.id='review-bulk-category';category.setAttribute('aria-label','分類批次選擇');
+    controls.append(category,button('選取此分類',()=>choose(page.scoped.filter(f=>f.category===category.value).map(f=>f.id),true),'button secondary'));
+  }
+  panel.append(controls);
+  const operations=node('div','action-row');
+  for(const [action,label] of [['mask','批次遮蔽'],['generalize','批次概化'],['keep','批次保留']] as [FindingAction,string][]){
+    const b=button(label,()=>{
+      pendingMulti.set(doc,{ids:[...selected],action,revision:doc.reviewRevision??0});refresh('review-bulk-confirm');
+    },'button secondary');b.disabled=selected.length===0;operations.append(b);
+  }
+  panel.append(operations);
+  const pending=pendingMulti.get(doc);
+  if(pending){
+    const existing=new Set(doc.findings.map(f=>f.id));
+    const valid=pending.ids.length>0&&pending.ids.every(id=>existing.has(id))&&pending.revision===(doc.reviewRevision??0);
+    const count=new Map<string,number>();
+    doc.findings.filter(f=>pending.ids.includes(f.id)).forEach(f=>count.set(f.category,(count.get(f.category)??0)+1));
+    const label=ACTIONS.find(a=>a.value===pending.action)?.label??pending.action;
+    const summary=node('div','batch-confirm notice');summary.setAttribute('role','alert');summary.id='review-bulk-confirm';
+    summary.append(node('p','','準備將 '+pending.ids.length+' 項改為「'+label+'」：'+[...count].map(([k,n])=>k+' '+n).join('、')+'。批次修改會撤銷受影響項目的核對狀態，仍須重讀全文。'));
+    const confirm=button('確認套用',()=>attempt(()=>{
+      if(!valid||(doc.reviewRevision??0)!==pending.revision)throw new Error('文件已變動，請重新選取並預覽');
+      const changed=changeMultipleFindings(doc,pending.ids,pending.action);
+      pendingMulti.delete(doc);state.selectedIds=[];ui.ctx.notify('已修改 '+changed+' 項；修改項目尚未完成核對');
+    },'review-toolbar'),'button primary');
+    confirm.disabled=!valid;
+    summary.append(node('div','action-row'));
+    summary.lastElementChild!.append(confirm,button('取消',()=>{pendingMulti.delete(doc);refresh('review-bulk-selection');}));
+    panel.append(summary);
+  }
+  return panel;
+}
+
 function findingEditor(ui:ReviewUI,f:WelfareFinding):HTMLElement {
   const {doc,attempt,refresh}=ui;const row=node('div',`finding tone-${toneOf(f)}${f.reviewed?' is-reviewed':''}`);row.id=rowId(f.id);row.dataset.findingId=f.id;row.tabIndex=-1;
   row.setAttribute('aria-label',`全文第 ${doc.findings.indexOf(f)+1} 項，${f.category}，${f.reviewed?'已核對':'待核對'}`);row.addEventListener('focusin',()=>{reviewState(doc).selectedId=f.id;});
+  const selected=reviewState(doc).selectedIds??[];
+  const pick=checkbox('納入批次',selected.includes(f.id),checked=>{
+    const next=new Set(reviewState(doc).selectedIds??[]);
+    if(checked)next.add(f.id);else next.delete(f.id);
+    reviewState(doc).selectedIds=[...next];pendingMulti.delete(doc);refresh('bulk-select-'+f.id);
+  });pick.classList.add('bulk-pick');pick.querySelector('input')!.id='bulk-select-'+f.id;row.append(pick);
   const excerpt=node('div','finding-value');excerpt.append(node('strong','',f.original),pill({rule:'規則建議',person:f.personId?'已確認人物':'姓名候選',manual:'人工標記',field:'人工欄位'}[f.source]),node('span',`review-status ${f.reviewed?'done':''}`,f.reviewed?'已核對':'待核對'),node('small','muted',(f.message??'').replace(REVIEW_NOTICE,'').trim()));
   const category=input(f.category);category.id=`category-${f.id}`;category.maxLength=40;category.setAttribute('aria-label','標記分類');category.onchange=()=>attempt(()=>changeFinding(doc,f.id,{category:category.value.trim()}),category.id);
   const categoryField=field('分類',category);categoryField.classList.add('cell-category');

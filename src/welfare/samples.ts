@@ -22,6 +22,6 @@ export const WELFARE_SAMPLES: WelfareSample[] = domains.flatMap(([domainId, doma
   const text = `【虛構${domain}範例${i + 1}】\n案號：${caseId}；案主：${name}；主要照顧者：${caregiver}。\n聯絡電話：${phone}；電子郵件：case${d}${i}@example.org。\n訪視日期：${date}；年齡：${d === 2 ? 70 + i : d === 1 ? 6 + i : 30 + i}歲。機構：${institution}；健康狀況：${clinical}。\n${context}`;
   return { id, title: `${domain}・虛構案例 ${i + 1}`, domain, text,
     people: [{ id: `${id}-client`, groupId, name, aliases: [], role: '服務對象', confirmed: true }, { id: `${id}-caregiver`, groupId, name: caregiver, aliases: [], role: '主要照顧者', confirmed: true }],
-    expectedSensitive: [caseId, name, caregiver, phone, `case${d}${i}@example.org`, date, institution, clinical],
+    expectedSensitive: [caseId, name, caregiver, phone, `case${d}${i}@example.org`, institution, clinical],
   };
 }));

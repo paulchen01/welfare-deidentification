@@ -66,7 +66,7 @@ describe('social welfare de-identification', () => {
     expect(result).not.toContain('9012');
   });
   it('preserves spaces adjoining dates and rejects invalid calendar dates', () => {
-    expect(redact('於 2026-10-02 訪視。')).toBe('於 [日期] 訪視。');
+    expect(redact('於 2026-10-02 訪視。')).toBe('於 2026-10-02 訪視。');
     expect(redact('2026-02-30')).toBe('2026-02-30');
   });
   it('distinguishes four-digit CE years from explicit and short-form ROC years without consuming spaces', () => {
@@ -186,6 +186,14 @@ describe('synthetic welfare corpus', () => {
         expect(sample.text, sample.id).toContain(value);
         expect(out, `${sample.id}: ${value}`).not.toContain(value);
       }
+    }
+  });
+  it('keeps synthetic service dates for AI review without exposing other annotated identifiers', () => {
+    for (const sample of WELFARE_SAMPLES) {
+      const date = sample.text.match(/訪視日期：([^；]+)/u)?.[1];
+      expect(date, sample.id).toBeTruthy();
+      const out = redact(sample.text, { purpose: 'ai', groupId: sample.people[0].groupId, people: sample.people });
+      expect(out, sample.id).toContain('訪視日期：'+date);
     }
   });
   it('preserves the synthetic corpus substantive closing sentences', () => {

@@ -256,3 +256,13 @@ h1{letter-spacing:0;font-weight:650;line-height:1.35}
 }
 .review-view .batch-editor:not([open]){border:0;padding:0;background:transparent}
 .review-view .batch-editor:not([open])>summary{font-size:.92rem;font-weight:500;color:var(--muted)}
+
+
+/* Batch review: selection is separate from the individual reviewed checkmark. */
+.review-view .bulk-selection{display:grid;gap:12px;margin:18px 0;padding:18px;border:1px solid var(--line);border-radius:8px;background:#f7faf5}
+.review-view .bulk-selection .action-row{gap:8px}
+.review-view .bulk-selection .control{max-width:210px}
+.review-view .bulk-selection .batch-confirm{padding:16px;background:#fff9ed;border:1px solid #d9c7a4;border-radius:7px}
+.review-view .bulk-selection .batch-confirm p{margin-bottom:12px}
+.review-view .finding>.bulk-pick{grid-column:1/-1;justify-self:start;padding:2px 0;margin:0}
+@media(max-width:760px){.review-view .bulk-selection{padding:12px}.review-view .bulk-selection .control{max-width:none}}

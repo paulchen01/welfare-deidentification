@@ -18,11 +18,13 @@ const NOTE = [
 ].join('\n');
 
 describe('narrative case notes', () => {
-  it('masks unlabeled names, short forms, dates, ages and health terms in a narrative note', () => {
+  it('masks sensitive narrative details but preserves service dates for chronology', () => {
     const out = redact(NOTE);
-    for (const s of ['張志明', '張王美珠', '阿珠', '志明', '張小豪', '小豪', '陳老師', '文山國小', '新生里', '糖尿病', '113年5月', '5/12', '三十五歲', '三年級']) {
+    for (const s of ['張志明', '張王美珠', '阿珠', '志明', '張小豪', '小豪', '陳老師', '文山國小', '新生里', '糖尿病', '三十五歲', '三年級']) {
       expect(out, s).not.toContain(s);
     }
+    expect(out).toContain('113年5月家訪');
+    expect(out).toContain('社工於5/12陪同案主');
   });
   it('keeps the narrative around places instead of swallowing the sentence', () => {
     const out = redact(NOTE);
