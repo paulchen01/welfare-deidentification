@@ -57,7 +57,7 @@ export function changeMultipleFindings(doc:WorkspaceDocument,ids:string[],action
     });
     if(!allowed)throw new Error('批次保留只適用已確認的工作人員姓名或一般日期；其他敏感資訊請逐項判斷');
   }
-  const next=doc.findings.map(f=>selected.has(f.id)?changedFinding(doc,f,{action}):f);
+  const next=doc.findings.map(f=>selected.has(f.id)&&f.action!==action?changedFinding(doc,f,{action}):f);
   const changedIds=next.filter((f,i)=>f!==doc.findings[i]&&(
     f.action!==doc.findings[i].action||f.category!==doc.findings[i].category||f.generalized!==doc.findings[i].generalized)).map(f=>f.id);
   if(!changedIds.length)return 0;
