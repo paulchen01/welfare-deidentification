@@ -3,7 +3,7 @@ import type { WorkspaceDocument } from './session';
 import type { FindingAction,WelfareFinding } from './types';
 import { revokeOutputApproval } from './output-scan';
 
-export interface ReviewState { filter:'all'|'pending'; page:number; selectedId?:string }
+export interface ReviewState { filter:'all'|'pending'; page:number; selectedId?:string; selectedIds?:string[] }
 export interface ReviewHistoryEntry { findings:WelfareFinding[]; affectedIds:string[] }
 export interface FindingChange { action?:FindingAction; category?:string; generalized?:string }
 export interface SameWordPreview {
@@ -36,6 +36,35 @@ export function changeFinding(doc:WorkspaceDocument,id:string,change:FindingChan
   if(next.action===f.action&&next.category===f.category&&next.generalized===f.generalized)return;
   commit(doc,doc.findings.map(f=>f.id===id?next:f),[id]);
 }
+/** Selection never implies that a finding was reviewed. A bulk decision is one undoable edit. */
+export function changeMultipleFindings(doc:WorkspaceDocument,ids:string[],action:FindingAction):number {
+  if(!['mask','keep','generalize'].includes(action))throw new Error('批次處理方式無效');
+  const selected=new Set(ids);
+  if(!selected.size)throw new Error('請先選取要處理的項目');
+  if(doc.findings.filter(f=>selected.has(f.id)).length!==selected.size)throw new Error('項目已變動，請重新選取');
+  const chosen=doc.findings.filter(f=>selected.has(f.id));
+  if(action==='generalize'&&chosen.some(f=>!f.generalized))
+    throw new Error('部分項目沒有可用的概化建議，請改選同類型項目或逐項輸入概化內容');
+  if(action==='keep'){
+    const config=doc.detectionConfig;
+    const allowed=chosen.every(f=>{
+      if(config?.purpose==='public')return false;
+      if(f.category==='日期')return !/出生日期|敏感事件/u.test(f.message??'');
+      if(f.category==='姓名'&&f.personId&&!/歧義|同名/u.test(f.message??'')){
+        return !!config?.people.some(p=>p.id===f.personId&&p.confirmed&&(p.role==='社工'||p.role==='督導'));
+      }
+      return false;
+    });
+    if(!allowed)throw new Error('批次保留只適用已確認的工作人員姓名或一般日期；其他敏感資訊請逐項判斷');
+  }
+  const next=doc.findings.map(f=>selected.has(f.id)?changedFinding(doc,f,{action}):f);
+  const changedIds=next.filter((f,i)=>f!==doc.findings[i]&&(
+    f.action!==doc.findings[i].action||f.category!==doc.findings[i].category||f.generalized!==doc.findings[i].generalized)).map(f=>f.id);
+  if(!changedIds.length)return 0;
+  commit(doc,next,changedIds);
+  return changedIds.length;
+}
+
 export function previewSameWord(doc:WorkspaceDocument,id:string,change:FindingChange):SameWordPreview {
   const f=doc.findings.find(f=>f.id===id);if(!f)throw new Error('項目已變動，請重新選取');
   const matches=doc.findings.filter(other=>other.original===f.original);
