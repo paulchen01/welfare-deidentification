@@ -51,7 +51,7 @@ export function changeMultipleFindings(doc:WorkspaceDocument,ids:string[],action
       if(config?.purpose==='public')return false;
       if(f.category==='日期')return !/出生日期|敏感事件/u.test(f.message??'');
       if(f.category==='姓名'&&f.personId&&!/歧義|同名/u.test(f.message??'')){
-        return !!config?.people.some(p=>p.id===f.personId&&p.confirmed&&(p.role==='社工'||p.role==='督導'));
+        return !!config?.people.some(p=>p.id===f.personId&&p.confirmed&&p.name===f.original&&(p.role==='社工'||p.role==='督導'));
       }
       return false;
     });
