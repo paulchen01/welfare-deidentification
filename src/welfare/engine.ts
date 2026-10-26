@@ -188,7 +188,7 @@ export function detectWelfare(text: string, config: DetectionConfig): WelfareFin
       const start = text.indexOf(name, from); if (start === -1) break; from = start + name.length;
       if (/^[A-Za-z]/u.test(name) && /[A-Za-z]/u.test(text[start - 1] ?? '')) continue;
       if (/[A-Za-z]$/u.test(name) && /[A-Za-z]/u.test(text[from] ?? '')) continue;
-      const verifiedStaff = !!owner && STAFF_ROLES.has(owner.person.role) && !staffNameHasClientConflict(text, name);
+      const verifiedStaff = !!owner && name === owner.person.name && STAFF_ROLES.has(owner.person.role) && !staffNameHasClientConflict(text, name);
       add(start, from, '姓名', 90, { source: 'person', replacement: owner?.replacement ?? '[姓名]', personId: owner?.person.id,
         action: verifiedStaff ? 'keep' : 'mask',
         message: ambiguous ? '姓名或別名歧義：同一文字對應多位人物，包含尚未確認的候選。' + NOTICE
